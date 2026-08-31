@@ -1,1 +1,943 @@
-console.info('gh2clockify ready');
+/**
+ * Orchestration: wires the DOM to the store, drives the chunked scan and
+ * import loops, and recomputes the preview plan locally whenever a mapping
+ * setting changes. This file is the only one that calls `fetch` indirectly
+ * (via ./api) and the only one that owns event listeners — ./render is pure
+ * `state -> DOM`, ./state is the store, ./api is the HTTP wrapper.
+ *
+ * The browser is the orchestrator: every network call here is one small,
+ * bounded piece of work (one repo-commits chunk, one search window, one
+ * apply batch of <= 5 entries). This module holds the accumulating state,
+ * drives the progress bar, and can be cancelled between chunks.
+ */
+import {
+  ApiError,
+  apply,
+  clockifyContext,
+  clockifyEntries,
+  clockifyProjects,
+  githubContext,
+  githubRepos,
+  scanCommits,
+  scanSearch,
+} from './api';
+import type { ClockifyLocation, RepoScope } from './api';
+import {
+  clearStoredCredentials,
+  createInitialState,
+  createStore,
+  hasStoredCredentials,
+  saveStoredCredentials,
+  savePrefs,
+} from './state';
+import type { DatePreset, ScanSourceKey, State } from './state';
+import { renderAll } from './render';
+import { aggregate } from '../src/aggregate';
+import { buildPlan } from '../src/plan';
+import { dayKey, isValidTimezone, utcOffsetLabel, utcRangeForLocalDays } from '../src/timezone';
+import type { Activity, ImportSettings, ProposedEntry } from '../src/types';
+
+// ---- small pure helpers ----
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function chunksOf<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** Matches the server's `MAX_COMMIT_REPOS` (src/routes/scan.ts). */
+const REPO_CHUNK = 8;
+/** Matches the server's `MAX_SEARCH_WINDOW_DAYS` (src/routes/scan.ts). */
+const SEARCH_WINDOW_DAYS = 31;
+/** Matches the server's `MAX_ENTRIES` (src/routes/apply.ts). */
+const APPLY_CHUNK = 5;
+
+function addDaysToKey(key: string, delta: number): string {
+  const [y, m, d] = key.split('-').map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
+}
+
+function firstOfMonth(key: string): string {
+  const [y, m] = key.split('-').map(Number) as [number, number];
+  return `${y}-${String(m).padStart(2, '0')}-01`;
+}
+
+/** Day 0 of the following month is the last day of this one. */
+function lastOfMonth(key: string): string {
+  const [y, m] = key.split('-').map(Number) as [number, number];
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+
+function shiftMonthFirst(key: string, delta: number): string {
+  const [y, m] = key.split('-').map(Number) as [number, number];
+  const dt = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-01`;
+}
+
+function computePresetRange(preset: DatePreset, tz: string): { start: string; end: string } | null {
+  if (preset === 'custom') return null;
+  const today = dayKey(Date.now(), tz);
+  if (preset === 'this-month') return { start: firstOfMonth(today), end: lastOfMonth(today) };
+  const prevFirst = shiftMonthFirst(firstOfMonth(today), -1);
+  return { start: prevFirst, end: lastOfMonth(prevFirst) };
+}
+
+/** Splits `[startKey, endKey]` into windows of at most `SEARCH_WINDOW_DAYS`
+ *  days, matching `/api/scan/search`'s per-request cap. */
+function monthWindows(startKey: string, endKey: string): { startKey: string; endKey: string }[] {
+  const windows: { startKey: string; endKey: string }[] = [];
+  let cur = startKey;
+  while (cur <= endKey) {
+    const candidate = addDaysToKey(cur, SEARCH_WINDOW_DAYS);
+    const end = candidate > endKey ? endKey : candidate;
+    windows.push({ startKey: cur, endKey: end });
+    cur = addDaysToKey(end, 1);
+  }
+  return windows;
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return 'Unexpected error.';
+}
+
+function clockifyLocation(prefs: State['prefs']): ClockifyLocation {
+  return { host: prefs.region, subdomain: prefs.subdomain };
+}
+
+function repoScope(prefs: State['prefs']): RepoScope {
+  return prefs.accountKind === 'org'
+    ? { kind: 'org', org: prefs.accountOrg }
+    : { kind: 'personal' };
+}
+
+function scopeFingerprint(s: State): string {
+  return JSON.stringify({
+    kind: s.prefs.accountKind,
+    org: s.prefs.accountOrg,
+    repos: [...s.prefs.selectedRepos].sort(),
+    start: s.prefs.startDate,
+    end: s.prefs.endDate,
+    sources: s.prefs.sources,
+  });
+}
+
+function buildSettings(s: State): ImportSettings {
+  return {
+    hoursPerDay: s.prefs.hoursPerDay,
+    startTime: s.prefs.startTime,
+    timezone: s.prefs.timezone,
+    includeWeekends: s.prefs.includeWeekends,
+    billable: s.prefs.billable,
+    workspaceId: s.prefs.workspaceId,
+    projectId: s.prefs.projectId,
+    repoAliases: {},
+  };
+}
+
+function qs<T extends HTMLElement = HTMLElement>(id: string): T {
+  const found = document.getElementById(id);
+  if (!found) throw new Error(`missing element #${id}`);
+  return found as T;
+}
+
+function announce(text: string): void {
+  qs('status-region').textContent = text;
+}
+
+// ---- store + render loop ----
+
+const store = createStore(createInitialState());
+
+function render(): void {
+  renderAll(store.getState(), hasStoredCredentials());
+}
+
+store.subscribe(render);
+
+/**
+ * Rule 1 of the brief: `entry.date` must always equal `localDayOf(entry.start,
+ * timezone)`. The only way to guarantee that is to never patch dates/times on
+ * an existing entry — always rebuild the whole plan from the raw activities.
+ * Runs whenever any mapping setting (hours, start time, timezone, weekend
+ * toggle, billable, project) changes, and after every scan/duplicate fetch.
+ * Purely local: no network call.
+ */
+function recomputePlan(): void {
+  store.update((s) => {
+    if (
+      s.scan.activities.length === 0 &&
+      s.scan.status !== 'done' &&
+      s.scan.status !== 'cancelled'
+    ) {
+      s.plan = null;
+      return;
+    }
+    const settings = buildSettings(s);
+    const { entries, skipped } = aggregate(s.scan.activities, settings);
+    const previousPlan = s.plan;
+    const plan = buildPlan(entries, s.existingEntries, {
+      timezone: settings.timezone,
+      skipped,
+      warnings: s.scan.warnings,
+    });
+
+    const nextChecked = new Set<string>();
+    for (const entry of plan.entries) {
+      const previousEntry = previousPlan?.entries.find((e) => e.date === entry.date);
+      if (
+        previousEntry &&
+        previousEntry.status === entry.status &&
+        s.checkedDates.has(entry.date)
+      ) {
+        nextChecked.add(entry.date);
+      } else if (!previousEntry && entry.status === 'new') {
+        nextChecked.add(entry.date);
+      }
+    }
+
+    s.plan = plan;
+    s.checkedDates = nextChecked;
+  });
+}
+
+/** Scope (dates/sources/repos/account) changed: cached activities and any
+ *  derived plan are stale. Does NOT touch mapping settings (hours, timezone,
+ *  etc.) — those recompute in place via recomputePlan(). */
+function invalidateScan(): void {
+  store.update((s) => {
+    s.scan.activities = [];
+    s.scan.warnings = [];
+    s.scan.fingerprint = null;
+    s.scan.status = 'idle';
+    s.scan.progress = 0;
+    s.existingEntries = [];
+    s.existingEntriesFingerprint = null;
+    s.plan = null;
+    s.checkedDates = new Set();
+  });
+}
+
+// ---- Connect ----
+
+async function handleVerify(): Promise<void> {
+  const s0 = store.getState();
+  store.update((s) => {
+    s.connect.githubStatus = 'checking';
+    s.connect.githubError = null;
+    s.connect.clockifyStatus = 'checking';
+    s.connect.clockifyError = null;
+  });
+
+  const loc = clockifyLocation(s0.prefs);
+  const [ghResult, cfResult] = await Promise.allSettled([
+    githubContext(s0.credentials),
+    clockifyContext(s0.credentials, loc),
+  ]);
+
+  store.update((s) => {
+    if (ghResult.status === 'fulfilled') {
+      s.connect.githubStatus = 'ok';
+      s.connect.viewer = ghResult.value.viewer;
+      s.connect.orgs = ghResult.value.orgs;
+    } else {
+      s.connect.githubStatus = 'error';
+      s.connect.githubError = errorMessage(ghResult.reason);
+    }
+    if (cfResult.status === 'fulfilled') {
+      s.connect.clockifyStatus = 'ok';
+      s.connect.clockifyUser = cfResult.value.user;
+      s.connect.workspaces = cfResult.value.workspaces;
+      if (!s.prefs.workspaceId && cfResult.value.workspaces[0]) {
+        s.prefs.workspaceId = cfResult.value.workspaces[0].id;
+      }
+    } else {
+      s.connect.clockifyStatus = 'error';
+      s.connect.clockifyError = errorMessage(cfResult.reason);
+    }
+  });
+  savePrefs(store.getState().prefs);
+}
+
+// ---- Scope ----
+
+async function loadRepos(): Promise<void> {
+  const s0 = store.getState();
+  if (s0.prefs.accountKind === 'org' && !s0.prefs.accountOrg) return;
+  const fp = `${s0.prefs.accountKind}:${s0.prefs.accountOrg}`;
+  if (s0.scope.reposFingerprint === fp && s0.scope.repos.length > 0) return;
+
+  store.update((s) => {
+    s.scope.reposLoading = true;
+    s.scope.reposError = null;
+  });
+  try {
+    const { repos } = await githubRepos(s0.credentials, repoScope(s0.prefs));
+    store.update((s) => {
+      s.scope.repos = repos;
+      s.scope.reposLoading = false;
+      s.scope.reposFingerprint = fp;
+    });
+  } catch (err) {
+    store.update((s) => {
+      s.scope.reposLoading = false;
+      s.scope.reposError = errorMessage(err);
+    });
+  }
+}
+
+// ---- Mapping ----
+
+async function loadProjects(): Promise<void> {
+  const s0 = store.getState();
+  if (!s0.prefs.workspaceId) return;
+  if (s0.mapping.projectsWorkspaceId === s0.prefs.workspaceId && s0.mapping.projects.length > 0)
+    return;
+
+  store.update((s) => {
+    s.mapping.projectsLoading = true;
+    s.mapping.projectsError = null;
+  });
+  try {
+    const loc = clockifyLocation(s0.prefs);
+    const { projects } = await clockifyProjects(s0.credentials, loc, s0.prefs.workspaceId);
+    store.update((s) => {
+      s.mapping.projects = projects;
+      s.mapping.projectsLoading = false;
+      s.mapping.projectsWorkspaceId = s0.prefs.workspaceId;
+      if (!projects.some((p) => p.id === s.prefs.projectId)) {
+        s.prefs.projectId = projects[0]?.id ?? '';
+      }
+    });
+    savePrefs(store.getState().prefs);
+  } catch (err) {
+    store.update((s) => {
+      s.mapping.projectsLoading = false;
+      s.mapping.projectsError = errorMessage(err);
+    });
+  }
+}
+
+// ---- Scan orchestration ----
+
+function labelForSource(key: 'pull_request' | 'issue' | 'review'): string {
+  if (key === 'pull_request') return 'pull requests';
+  if (key === 'issue') return 'issues';
+  return 'reviews';
+}
+
+async function runScan(): Promise<void> {
+  const s0 = store.getState();
+  const login = s0.connect.viewer?.login;
+  if (!login) return;
+
+  const scope = repoScope(s0.prefs);
+  const repos = [...s0.prefs.selectedRepos];
+  const { startDate, endDate, sources } = s0.prefs;
+  const tz = s0.prefs.timezone;
+
+  store.update((s) => {
+    s.scan.status = 'running';
+    s.scan.progress = 0;
+    s.scan.activities = [];
+    s.scan.warnings = [];
+    s.scan.error = null;
+    s.scan.cancelRequested = false;
+    s.scan.statusText = 'Starting scan…';
+    s.plan = null;
+    s.importing = { status: 'idle', results: [], total: 0, completed: 0, stopRequested: false };
+  });
+  announce('Scan started.');
+
+  const commitChunks = sources.commits ? chunksOf(repos, REPO_CHUNK) : [];
+  const searchSources: ('pull_request' | 'issue' | 'review')[] = [];
+  if (sources.pulls) searchSources.push('pull_request');
+  if (sources.issues) searchSources.push('issue');
+  if (sources.reviews) searchSources.push('review');
+  const windows = monthWindows(startDate, endDate);
+  const totalChunks = commitChunks.length + searchSources.length * windows.length;
+  let doneChunks = 0;
+
+  const activities: Activity[] = [];
+  const warnings: string[] = [];
+  let incompleteAny = false;
+
+  const { sinceIso, untilIso } = utcRangeForLocalDays(startDate, endDate, tz);
+
+  for (const chunk of commitChunks) {
+    if (store.getState().scan.cancelRequested) break;
+    store.update((s) => {
+      s.scan.statusText = `Fetching commits (${doneChunks + 1} of ${totalChunks})…`;
+    });
+    try {
+      const result = await scanCommits(s0.credentials, { repos: chunk, login, sinceIso, untilIso });
+      activities.push(...result.activities);
+      warnings.push(...result.warnings);
+    } catch (err) {
+      warnings.push(errorMessage(err));
+    }
+    doneChunks += 1;
+    store.update((s) => {
+      s.scan.progress = (doneChunks / Math.max(totalChunks, 1)) * 100;
+    });
+  }
+
+  searchLoop: for (const source of searchSources) {
+    for (const window of windows) {
+      if (store.getState().scan.cancelRequested) break searchLoop;
+      store.update((s) => {
+        s.scan.statusText = `Searching ${labelForSource(source)} (${doneChunks + 1} of ${totalChunks})…`;
+      });
+      try {
+        const offsetLabel = utcOffsetLabel(window.startKey, tz);
+        const result = await scanSearch(s0.credentials, {
+          source,
+          login,
+          scope,
+          repos,
+          startKey: window.startKey,
+          endKey: window.endKey,
+          offsetLabel,
+        });
+        activities.push(...result.activities);
+        warnings.push(...result.warnings);
+        if (result.incomplete) incompleteAny = true;
+      } catch (err) {
+        warnings.push(errorMessage(err));
+      }
+      doneChunks += 1;
+      store.update((s) => {
+        s.scan.progress = (doneChunks / Math.max(totalChunks, 1)) * 100;
+      });
+      // GitHub Search allows 30 requests/minute; pace between windows.
+      if (doneChunks < totalChunks) await sleep(2000);
+    }
+  }
+
+  if (incompleteAny) {
+    warnings.push('GitHub returned partial search results — try a narrower range.');
+  }
+
+  const cancelled = store.getState().scan.cancelRequested;
+  store.update((s) => {
+    s.scan.activities = activities;
+    s.scan.warnings = warnings;
+    s.scan.status = cancelled ? 'cancelled' : 'done';
+    s.scan.progress = 100;
+    s.scan.fingerprint = scopeFingerprint(s);
+  });
+  announce(cancelled ? 'Scan cancelled.' : `Scan complete: ${activities.length} activities found.`);
+
+  if (!cancelled) await loadExistingEntriesAndRecompute();
+  else recomputePlan();
+}
+
+async function loadExistingEntriesAndRecompute(): Promise<void> {
+  const s0 = store.getState();
+  const { startDate, endDate, timezone, workspaceId } = s0.prefs;
+  if (!workspaceId || !s0.connect.clockifyUser) {
+    recomputePlan();
+    return;
+  }
+  const fp = `${workspaceId}:${startDate}:${endDate}:${timezone}`;
+  if (s0.existingEntriesFingerprint !== fp) {
+    try {
+      const { sinceIso, untilIso } = utcRangeForLocalDays(startDate, endDate, timezone);
+      const loc = clockifyLocation(s0.prefs);
+      const { entries } = await clockifyEntries(
+        s0.credentials,
+        loc,
+        workspaceId,
+        s0.connect.clockifyUser.id,
+        sinceIso,
+        untilIso,
+      );
+      store.update((s) => {
+        s.existingEntries = entries;
+        s.existingEntriesFingerprint = fp;
+      });
+    } catch (err) {
+      const message = errorMessage(err);
+      store.update((s) => {
+        s.scan.warnings = [...s.scan.warnings, `Could not check for duplicate entries: ${message}`];
+      });
+    }
+  }
+  recomputePlan();
+}
+
+// ---- Import orchestration ----
+
+async function runImport(): Promise<void> {
+  const s0 = store.getState();
+  if (!s0.plan) return;
+  const checked = s0.plan.entries.filter((e) => s0.checkedDates.has(e.date));
+  if (checked.length === 0) return;
+
+  store.update((s) => {
+    s.importing = {
+      status: 'running',
+      results: [],
+      total: checked.length,
+      completed: 0,
+      stopRequested: false,
+    };
+  });
+  announce(`Import started: ${checked.length} entries.`);
+
+  const userId = s0.connect.clockifyUser?.id ?? '';
+
+  for (const batch of chunksOf(checked, APPLY_CHUNK)) {
+    if (store.getState().importing.stopRequested) break;
+    const proposed: ProposedEntry[] = batch.map((e) => ({
+      date: e.date,
+      start: e.start,
+      end: e.end,
+      description: e.description,
+      billable: e.billable,
+      projectId: e.projectId,
+      activityCount: e.activityCount,
+      repos: e.repos,
+    }));
+    try {
+      const { results } = await apply(s0.credentials, {
+        host: s0.prefs.region,
+        subdomain: s0.prefs.subdomain || undefined,
+        workspaceId: s0.prefs.workspaceId,
+        userId,
+        timezone: s0.prefs.timezone,
+        entries: proposed,
+      });
+      store.update((s) => {
+        s.importing.results = [...s.importing.results, ...results];
+        s.importing.completed += results.length;
+      });
+    } catch (err) {
+      const message = errorMessage(err);
+      store.update((s) => {
+        s.importing.results = [
+          ...s.importing.results,
+          ...batch.map((e) => ({ date: e.date, ok: false, error: message })),
+        ];
+        s.importing.completed += batch.length;
+      });
+    }
+  }
+
+  store.update((s) => {
+    s.importing.status = 'done';
+  });
+  announce('Import finished.');
+}
+
+// ---- DOM wiring ----
+
+function initFormFromState(): void {
+  const s = store.getState();
+
+  qs<HTMLInputElement>('gh-pat').value = s.credentials.github;
+  qs<HTMLInputElement>('clockify-key').value = s.credentials.clockify;
+  qs<HTMLSelectElement>('clockify-region').value = s.prefs.region;
+  qs<HTMLInputElement>('clockify-subdomain').value = s.prefs.subdomain;
+  qs<HTMLInputElement>('remember').checked = s.prefs.remember;
+
+  const presetRadio = document.querySelector<HTMLInputElement>(
+    `input[name="date-preset"][value="${s.prefs.datePreset}"]`,
+  );
+  if (presetRadio) presetRadio.checked = true;
+
+  const startInput = qs<HTMLInputElement>('scope-start');
+  const endInput = qs<HTMLInputElement>('scope-end');
+  const range = computePresetRange(s.prefs.datePreset, s.prefs.timezone);
+  if (range) {
+    store.update((st) => {
+      st.prefs.startDate = range.start;
+      st.prefs.endDate = range.end;
+    });
+    startInput.value = range.start;
+    endInput.value = range.end;
+    startInput.disabled = true;
+    endInput.disabled = true;
+  } else {
+    startInput.value = s.prefs.startDate;
+    endInput.value = s.prefs.endDate;
+  }
+
+  qs<HTMLInputElement>('source-commits').checked = s.prefs.sources.commits;
+  qs<HTMLInputElement>('source-pulls').checked = s.prefs.sources.pulls;
+  qs<HTMLInputElement>('source-issues').checked = s.prefs.sources.issues;
+  qs<HTMLInputElement>('source-reviews').checked = s.prefs.sources.reviews;
+
+  savePrefs(store.getState().prefs);
+}
+
+function wireConnectStep(): void {
+  qs('connect-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    void handleVerify();
+  });
+
+  qs<HTMLInputElement>('gh-pat').addEventListener('input', (e) => {
+    const value = (e.target as HTMLInputElement).value;
+    store.update((s) => {
+      s.credentials.github = value;
+    });
+    if (store.getState().prefs.remember) {
+      saveStoredCredentials(
+        store.getState().credentials.github,
+        store.getState().credentials.clockify,
+      );
+    }
+  });
+  qs<HTMLInputElement>('clockify-key').addEventListener('input', (e) => {
+    const value = (e.target as HTMLInputElement).value;
+    store.update((s) => {
+      s.credentials.clockify = value;
+    });
+    if (store.getState().prefs.remember) {
+      saveStoredCredentials(
+        store.getState().credentials.github,
+        store.getState().credentials.clockify,
+      );
+    }
+  });
+
+  qs<HTMLSelectElement>('clockify-region').addEventListener('change', (e) => {
+    const value = (e.target as HTMLSelectElement).value;
+    store.update((s) => {
+      s.prefs.region = value;
+    });
+    savePrefs(store.getState().prefs);
+  });
+  qs<HTMLInputElement>('clockify-subdomain').addEventListener('change', (e) => {
+    const value = (e.target as HTMLInputElement).value;
+    store.update((s) => {
+      s.prefs.subdomain = value;
+    });
+    savePrefs(store.getState().prefs);
+  });
+
+  qs<HTMLInputElement>('remember').addEventListener('change', (e) => {
+    const checked = (e.target as HTMLInputElement).checked;
+    store.update((s) => {
+      s.prefs.remember = checked;
+    });
+    savePrefs(store.getState().prefs);
+    if (checked) {
+      const creds = store.getState().credentials;
+      saveStoredCredentials(creds.github, creds.clockify);
+    } else {
+      clearStoredCredentials();
+    }
+  });
+
+  qs('forget-btn').addEventListener('click', () => {
+    clearStoredCredentials();
+    store.update((s) => {
+      s.credentials = { github: '', clockify: '' };
+      s.prefs.remember = false;
+      s.connect = {
+        githubStatus: 'idle',
+        githubError: null,
+        clockifyStatus: 'idle',
+        clockifyError: null,
+        viewer: null,
+        orgs: [],
+        clockifyUser: null,
+        workspaces: [],
+      };
+    });
+    savePrefs(store.getState().prefs);
+    qs<HTMLInputElement>('gh-pat').value = '';
+    qs<HTMLInputElement>('clockify-key').value = '';
+    qs<HTMLInputElement>('remember').checked = false;
+  });
+
+  qs('connect-continue').addEventListener('click', () => {
+    store.update((s) => {
+      s.step = 2;
+    });
+    void loadRepos();
+  });
+}
+
+function wireScopeStep(): void {
+  for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="date-preset"]')) {
+    radio.addEventListener('change', () => {
+      if (!radio.checked) return;
+      const preset = radio.value as DatePreset;
+      const startInput = qs<HTMLInputElement>('scope-start');
+      const endInput = qs<HTMLInputElement>('scope-end');
+      const range = computePresetRange(preset, store.getState().prefs.timezone);
+      if (range) {
+        startInput.value = range.start;
+        endInput.value = range.end;
+        startInput.disabled = true;
+        endInput.disabled = true;
+      } else {
+        startInput.disabled = false;
+        endInput.disabled = false;
+      }
+      store.update((s) => {
+        s.prefs.datePreset = preset;
+        s.prefs.startDate = startInput.value;
+        s.prefs.endDate = endInput.value;
+      });
+      savePrefs(store.getState().prefs);
+      invalidateScan();
+    });
+  }
+
+  qs<HTMLInputElement>('scope-start').addEventListener('change', (e) => {
+    const value = (e.target as HTMLInputElement).value;
+    store.update((s) => {
+      s.prefs.startDate = value;
+    });
+    savePrefs(store.getState().prefs);
+    invalidateScan();
+  });
+  qs<HTMLInputElement>('scope-end').addEventListener('change', (e) => {
+    const value = (e.target as HTMLInputElement).value;
+    store.update((s) => {
+      s.prefs.endDate = value;
+    });
+    savePrefs(store.getState().prefs);
+    invalidateScan();
+  });
+
+  const sourceMap: Record<string, ScanSourceKey> = {
+    'source-commits': 'commits',
+    'source-pulls': 'pulls',
+    'source-issues': 'issues',
+    'source-reviews': 'reviews',
+  };
+  for (const [id, key] of Object.entries(sourceMap)) {
+    qs<HTMLInputElement>(id).addEventListener('change', (e) => {
+      const checked = (e.target as HTMLInputElement).checked;
+      store.update((s) => {
+        s.prefs.sources[key] = checked;
+      });
+      savePrefs(store.getState().prefs);
+      invalidateScan();
+    });
+  }
+
+  qs<HTMLSelectElement>('scope-account').addEventListener('change', (e) => {
+    const value = (e.target as HTMLSelectElement).value;
+    store.update((s) => {
+      s.prefs.accountKind = value === 'personal' ? 'personal' : 'org';
+      s.prefs.accountOrg = value === 'personal' ? '' : value;
+      s.prefs.selectedRepos = [];
+    });
+    savePrefs(store.getState().prefs);
+    invalidateScan();
+    void loadRepos();
+  });
+
+  qs<HTMLInputElement>('repo-filter').addEventListener('input', (e) => {
+    const value = (e.target as HTMLInputElement).value;
+    store.update((s) => {
+      s.scope.repoFilter = value;
+    });
+  });
+
+  qs('repo-select-all').addEventListener('click', () => {
+    const s0 = store.getState();
+    const needle = s0.scope.repoFilter.trim().toLowerCase();
+    const visible = needle
+      ? s0.scope.repos.filter((r) => r.fullName.toLowerCase().includes(needle))
+      : s0.scope.repos;
+    const allSelected =
+      visible.length > 0 && visible.every((r) => s0.prefs.selectedRepos.includes(r.fullName));
+    store.update((s) => {
+      const set = new Set(s.prefs.selectedRepos);
+      for (const r of visible) {
+        if (allSelected) set.delete(r.fullName);
+        else set.add(r.fullName);
+      }
+      s.prefs.selectedRepos = [...set];
+    });
+    savePrefs(store.getState().prefs);
+    invalidateScan();
+  });
+
+  qs('repo-list').addEventListener('change', (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLInputElement) || !target.dataset.repo) return;
+    const repo = target.dataset.repo;
+    store.update((s) => {
+      const set = new Set(s.prefs.selectedRepos);
+      if (target.checked) set.add(repo);
+      else set.delete(repo);
+      s.prefs.selectedRepos = [...set];
+    });
+    savePrefs(store.getState().prefs);
+    invalidateScan();
+  });
+
+  qs('scope-back').addEventListener('click', () => {
+    store.update((s) => {
+      s.step = 1;
+    });
+  });
+  qs('scope-continue').addEventListener('click', () => {
+    store.update((s) => {
+      s.step = 3;
+    });
+    void loadProjects();
+  });
+}
+
+function wireMappingStep(): void {
+  qs<HTMLSelectElement>('mapping-workspace').addEventListener('change', (e) => {
+    const value = (e.target as HTMLSelectElement).value;
+    store.update((s) => {
+      s.prefs.workspaceId = value;
+      s.mapping.projects = [];
+      s.mapping.projectsWorkspaceId = null;
+      s.existingEntries = [];
+      s.existingEntriesFingerprint = null;
+    });
+    savePrefs(store.getState().prefs);
+    void loadProjects();
+  });
+
+  qs<HTMLSelectElement>('mapping-project').addEventListener('change', (e) => {
+    const value = (e.target as HTMLSelectElement).value;
+    store.update((s) => {
+      s.prefs.projectId = value;
+    });
+    savePrefs(store.getState().prefs);
+    recomputePlan();
+  });
+
+  qs<HTMLInputElement>('hours-per-day').addEventListener('change', (e) => {
+    const raw = Number((e.target as HTMLInputElement).value);
+    const value =
+      Number.isFinite(raw) && raw > 0 && raw <= 24 ? raw : store.getState().prefs.hoursPerDay;
+    store.update((s) => {
+      s.prefs.hoursPerDay = value;
+    });
+    savePrefs(store.getState().prefs);
+    recomputePlan();
+  });
+
+  qs<HTMLInputElement>('start-time').addEventListener('change', (e) => {
+    const value = (e.target as HTMLInputElement).value;
+    store.update((s) => {
+      s.prefs.startTime = value;
+    });
+    savePrefs(store.getState().prefs);
+    recomputePlan();
+  });
+
+  qs<HTMLInputElement>('mapping-timezone').addEventListener('change', (e) => {
+    const input = e.target as HTMLInputElement;
+    const value = input.value.trim();
+    if (!isValidTimezone(value)) {
+      input.setCustomValidity("That doesn't look like a valid IANA timezone, e.g. Europe/Warsaw.");
+      input.reportValidity();
+      return;
+    }
+    input.setCustomValidity('');
+    store.update((s) => {
+      s.prefs.timezone = value;
+    });
+    savePrefs(store.getState().prefs);
+    recomputePlan();
+  });
+
+  qs<HTMLInputElement>('mapping-billable').addEventListener('change', (e) => {
+    const checked = (e.target as HTMLInputElement).checked;
+    store.update((s) => {
+      s.prefs.billable = checked;
+    });
+    savePrefs(store.getState().prefs);
+    recomputePlan();
+  });
+  qs<HTMLInputElement>('mapping-weekends').addEventListener('change', (e) => {
+    const checked = (e.target as HTMLInputElement).checked;
+    store.update((s) => {
+      s.prefs.includeWeekends = checked;
+    });
+    savePrefs(store.getState().prefs);
+    recomputePlan();
+  });
+
+  qs('mapping-back').addEventListener('click', () => {
+    store.update((s) => {
+      s.step = 2;
+    });
+  });
+
+  qs('mapping-continue').addEventListener('click', () => {
+    store.update((s) => {
+      s.step = 4;
+    });
+    const s0 = store.getState();
+    const fp = scopeFingerprint(s0);
+    if (s0.scan.fingerprint === fp && s0.scan.activities.length > 0) {
+      void loadExistingEntriesAndRecompute();
+    } else {
+      void runScan();
+    }
+  });
+}
+
+function wirePreviewStep(): void {
+  qs('preview-back').addEventListener('click', () => {
+    if (store.getState().scan.status === 'running') {
+      store.update((s) => {
+        s.scan.cancelRequested = true;
+      });
+      return;
+    }
+    store.update((s) => {
+      s.step = 3;
+    });
+  });
+
+  qs<HTMLInputElement>('preview-select-all').addEventListener('change', (e) => {
+    const checked = (e.target as HTMLInputElement).checked;
+    store.update((s) => {
+      if (!s.plan) return;
+      s.checkedDates = checked ? new Set(s.plan.entries.map((entry) => entry.date)) : new Set();
+    });
+  });
+
+  qs('preview-rows').addEventListener('change', (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLInputElement) || !target.dataset.dateCheckbox) return;
+    const date = target.dataset.dateCheckbox;
+    store.update((s) => {
+      const set = new Set(s.checkedDates);
+      if (target.checked) set.add(date);
+      else set.delete(date);
+      s.checkedDates = set;
+    });
+  });
+
+  qs('import-btn').addEventListener('click', () => {
+    if (store.getState().importing.status === 'running') {
+      store.update((s) => {
+        s.importing.stopRequested = true;
+      });
+      return;
+    }
+    void runImport();
+  });
+}
+
+function init(): void {
+  initFormFromState();
+  wireConnectStep();
+  wireScopeStep();
+  wireMappingStep();
+  wirePreviewStep();
+  render();
+}
+
+init();
