@@ -15,7 +15,6 @@ export default defineConfig({
             'test/validate.test.ts',
           ],
           environment: 'node',
-          passWithNoTests: true,
         },
       },
       {
