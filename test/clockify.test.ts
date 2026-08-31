@@ -216,6 +216,23 @@ describe('clockify client', () => {
     ]);
   });
 
+  it('8b. listWorkspaces treats a missing/null featureSubscriptionType as freeTier: true, plan: UNKNOWN', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse([
+        { id: 'w3', name: 'No Field WS' },
+        { id: 'w4', name: 'Null Field WS', featureSubscriptionType: null },
+      ]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const workspaces = await listWorkspaces(KEY, BASE);
+
+    expect(workspaces).toEqual([
+      { id: 'w3', name: 'No Field WS', plan: 'UNKNOWN', freeTier: true },
+      { id: 'w4', name: 'Null Field WS', plan: 'UNKNOWN', freeTier: true },
+    ]);
+  });
+
   it('9. a workspace id failing isClockifyId is rejected before any fetch', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

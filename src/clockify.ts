@@ -112,10 +112,13 @@ export async function getUser(key: string, base: string): Promise<ClockifyUser> 
 type ClockifyWorkspaceDto = {
   id: string;
   name: string;
-  /** Absent on some legacy/free workspaces; treated as `FREE` when missing —
-   *  the conservative default, since the alternative (assuming paid) would
-   *  silently drop the 30-req/hour warning for exactly the accounts that
-   *  need it most. */
+  /** Absent on some legacy/free workspaces. `plan` and `freeTier` are
+   *  deliberately decoupled: `freeTier` treats a missing value as free (the
+   *  conservative default — the alternative would silently drop the
+   *  30-req/hour warning for exactly the accounts that need it most), but
+   *  `plan` must not fabricate a confirmed `'FREE'` label for a value we
+   *  never actually received — that would misreport an unknown/legacy plan
+   *  as "Free" for the wrong reason. */
   featureSubscriptionType?: string | null;
 };
 
@@ -126,10 +129,12 @@ export async function listWorkspaces(key: string, base: string): Promise<Workspa
     { headers },
     { label: 'Clockify /workspaces' },
   );
-  return data.map((w) => {
-    const plan = w.featureSubscriptionType ?? 'FREE';
-    return { id: w.id, name: w.name, plan, freeTier: plan === 'FREE' };
-  });
+  return data.map((w) => ({
+    id: w.id,
+    name: w.name,
+    plan: w.featureSubscriptionType ?? 'UNKNOWN',
+    freeTier: w.featureSubscriptionType == null || w.featureSubscriptionType === 'FREE',
+  }));
 }
 
 type ClockifyProjectDto = {
