@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": [
+    "client/**/*",
+    "src/types.ts",
+    "src/timezone.ts",
+    "src/describe.ts",
+    "src/aggregate.ts",
+    "src/plan.ts",
+    "src/validate.ts"
+  ]
+}

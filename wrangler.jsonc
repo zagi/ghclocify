@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gh2clockify",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+  },
+  // Paid plan. Aggregation is client-side, so the Worker never needs long CPU,
+  // but JSON.parse over many 100-item commit pages is real work.
+  "limits": {
+    "cpu_ms": 60000,
+  },
+  "assets": {
+    "directory": "./public",
+    // /api/* goes to the Worker; everything else is served from public/.
+    "run_worker_first": ["/api/*"],
+    // NOT "single-page-application": that mode makes *navigation* requests skip
+    // the Worker entirely, so opening an /api/ URL in a tab would render
+    // index.html instead of the API response. This is one hand-written page
+    // with no client-side router, so it wants no SPA fallback at all.
+    "not_found_handling": "none",
+    "html_handling": "auto-trailing-slash",
+  },
+  // Storage-free abuse guards. Counters are per-colo and eventually consistent —
+  // Cloudflare documents them as permissive, not exact. Good enough to stop a
+  // script from using this Worker as a token-validity oracle.
+  "ratelimits": [
+    { "name": "RL_IP", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } },
+    { "name": "RL_TOKEN", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
+  ],
+  // Intentionally no kv_namespaces / d1_databases / r2_buckets: this Worker
+  // handles other people's API keys and must have nowhere to put them.
+}
