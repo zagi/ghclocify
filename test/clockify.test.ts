@@ -233,6 +233,30 @@ describe('clockify client', () => {
     ]);
   });
 
+  it('10. a failing createEntry POST is attempted exactly once (no automatic retry)', async () => {
+    // Clockify has no idempotency key: a retried POST after a lost response
+    // is exactly how a duplicate time entry gets created. `retries: 0`
+    // means a single 500 must surface immediately, with no second attempt.
+    const fetchMock = vi.fn().mockResolvedValue(errorResponse(500));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const proposed: ProposedEntry = {
+      date: '2026-08-01',
+      start: '2026-08-01T09:00:00Z',
+      end: '2026-08-01T17:00:00Z',
+      description: 'Did some work',
+      billable: true,
+      projectId: 'p1',
+      activityCount: 3,
+      repos: ['acme/repo'],
+    };
+
+    const err = await expectAppError(createEntry(KEY, BASE, WS, proposed));
+
+    expect(err.status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('9. a workspace id failing isClockifyId is rejected before any fetch', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

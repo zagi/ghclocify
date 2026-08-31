@@ -5,6 +5,7 @@ import { problem } from './problems';
 import { githubRoutes } from './routes/github';
 import { clockifyRoutes } from './routes/clockify';
 import { scanRoutes } from './routes/scan';
+import { applyRoutes } from './routes/apply';
 
 export type Env = {
   RL_IP: RateLimit;
@@ -20,6 +21,7 @@ app.get('/api/health', (c) => c.json({ ok: true }));
 app.route('/api/github', githubRoutes);
 app.route('/api/clockify', clockifyRoutes);
 app.route('/api/scan', scanRoutes);
+app.route('/api/apply', applyRoutes);
 
 app.notFound((c) => c.json({ error: 'not_found', message: 'No such route' }, 404));
 

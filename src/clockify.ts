@@ -248,7 +248,19 @@ export async function createEntry(
   const { data } = await fetchJson<{ id: string }>(
     `${base}/workspaces/${ws}/time-entries`,
     { method: 'POST', headers, body: JSON.stringify(body) },
-    { label: 'Clockify /workspaces/{ws}/time-entries' },
+    {
+      label: 'Clockify /workspaces/{ws}/time-entries',
+      // Clockify's API has no idempotency key. `fetchJson`'s default of 2
+      // automatic retries is fine for GETs, but not here: if this POST
+      // succeeds server-side and only the response is lost (timeout, 502,
+      // dropped connection), an automatic retry would create a SECOND
+      // identical time entry — silently doubling the user's logged hours,
+      // which is the exact bug this product exists to prevent. Resolving
+      // that ambiguity (re-checking what actually exists in Clockify rather
+      // than blindly retrying the write) is the apply route's job — see
+      // `routes/apply.ts`.
+      retries: 0,
+    },
   );
   return { id: data.id };
 }

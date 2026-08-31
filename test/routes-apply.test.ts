@@ -1,0 +1,301 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { env } from 'cloudflare:test';
+import app from '../src/index';
+import type { ApplyResult } from '../src/types';
+
+const ORIGIN = 'https://gh2clockify.example.workers.dev';
+const CK_KEY = 'ck_test_key_1234567890abcdef';
+const WS = '5f1234567890abcdef123456';
+const UID = '5f1234567890abcdef654321';
+const PROJECT_ID = '5f1234567890abcdef111111';
+
+const call = (path: string, init: RequestInit = {}) => app.request(`${ORIGIN}${path}`, init, env);
+
+const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+  call(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'X-Clockify-Key': CK_KEY, ...headers },
+    body: JSON.stringify(body),
+  });
+
+function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    ...init,
+    headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
+  });
+}
+
+function errorResponse(status: number): Response {
+  return new Response('nope', { status });
+}
+
+/** Routes a stubbed fetch by matching the request URL against handlers in order. */
+function routedFetch(
+  handlers: Array<{ test: (url: string, init?: RequestInit) => boolean; respond: () => Response }>,
+) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    for (const h of handlers) {
+      if (h.test(url, init)) return h.respond();
+    }
+    throw new Error(`unmocked fetch: ${url} ${init?.method ?? 'GET'}`);
+  });
+}
+
+function neverCalledFetch() {
+  return vi.fn(async () => {
+    throw new Error('fetch should not have been called');
+  });
+}
+
+/** listEntries hits `/workspaces/{ws}/user/{uid}/time-entries`; createEntry
+ *  hits `/workspaces/{ws}/time-entries` — no `/user/` segment — so the two
+ *  are distinguishable by URL shape alone. */
+const isListEntries = (url: string) => url.includes('/user/') && url.includes('/time-entries');
+const isCreateEntry = (url: string, init?: RequestInit) =>
+  !url.includes('/user/') && url.includes('/time-entries') && init?.method === 'POST';
+
+function emptyListHandler() {
+  return {
+    test: isListEntries,
+    respond: () => jsonResponse([], { headers: { 'Last-Page': 'true' } }),
+  };
+}
+
+function existingEntryHandler(start: string) {
+  return {
+    test: isListEntries,
+    respond: () =>
+      jsonResponse(
+        [
+          {
+            id: 'existing-1',
+            timeInterval: { start, end: null },
+            description: 'already logged',
+            projectId: PROJECT_ID,
+          },
+        ],
+        { headers: { 'Last-Page': 'true' } },
+      ),
+  };
+}
+
+function createHandler(id: string) {
+  return { test: isCreateEntry, respond: () => jsonResponse({ id }) };
+}
+
+const ENTRY_1 = {
+  date: '2026-08-01',
+  start: '2026-08-01T09:00:00Z',
+  end: '2026-08-01T17:00:00Z',
+  description: 'Did some work',
+  billable: true,
+  projectId: PROJECT_ID,
+  activityCount: 3,
+  repos: ['acme/repo'],
+};
+
+const ENTRY_2 = {
+  date: '2026-08-02',
+  start: '2026-08-02T09:00:00Z',
+  end: '2026-08-02T17:00:00Z',
+  description: 'Did more work',
+  billable: true,
+  projectId: PROJECT_ID,
+  activityCount: 2,
+  repos: ['acme/repo'],
+};
+
+const VALID_BODY = {
+  host: 'api',
+  workspaceId: WS,
+  userId: UID,
+  timezone: 'UTC',
+  entries: [ENTRY_1, ENTRY_2],
+};
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('apply route', () => {
+  it('1. two new entries -> two POSTs, results both ok:true with entry ids', async () => {
+    let createCount = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        emptyListHandler(),
+        {
+          test: isCreateEntry,
+          respond: () => {
+            createCount += 1;
+            return jsonResponse({ id: `new-${createCount}` });
+          },
+        },
+      ]),
+    );
+
+    const res = await post('/api/apply', VALID_BODY);
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toEqual([
+      { date: '2026-08-01', ok: true, entryId: 'new-1' },
+      { date: '2026-08-02', ok: true, entryId: 'new-2' },
+    ]);
+    expect(createCount).toBe(2);
+  });
+
+  it('2. an entry that already exists is skipped with no POST', async () => {
+    const fetchMock = routedFetch([
+      existingEntryHandler(ENTRY_1.start),
+      { test: isCreateEntry, respond: () => jsonResponse({ id: 'should-not-happen' }) },
+    ]);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await post('/api/apply', { ...VALID_BODY, entries: [ENTRY_1] });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toEqual([
+      { date: '2026-08-01', ok: true, skipped: true, error: 'Already exists' },
+    ]);
+    // Airtight: no call to fetch ever had method POST.
+    const postCalls = fetchMock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(postCalls).toHaveLength(0);
+  });
+
+  it('3. entries.length = 6 -> 400 invalid_request, no writes', async () => {
+    const fetchMock = neverCalledFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      entries: Array.from({ length: 6 }, (_, i) => ({
+        ...ENTRY_1,
+        date: `2026-08-${String(i + 1).padStart(2, '0')}`,
+      })),
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('4. a 400 on entry 1 does not stop entry 2 — one failure, one success', async () => {
+    let createCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        emptyListHandler(),
+        {
+          test: isCreateEntry,
+          respond: () => {
+            createCalls += 1;
+            return createCalls === 1 ? errorResponse(400) : jsonResponse({ id: 'new-2' });
+          },
+        },
+      ]),
+    );
+
+    const res = await post('/api/apply', VALID_BODY);
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toHaveLength(2);
+    expect(body.results[0]).toEqual(expect.objectContaining({ date: '2026-08-01', ok: false }));
+    expect(body.results[1]).toEqual({ date: '2026-08-02', ok: true, entryId: 'new-2' });
+    expect(createCalls).toBe(2);
+  });
+
+  it('5. the duplicate pre-check fetches entries once for the batch, not once per entry', async () => {
+    let listCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        {
+          test: isListEntries,
+          respond: () => {
+            listCalls += 1;
+            return jsonResponse([], { headers: { 'Last-Page': 'true' } });
+          },
+        },
+        createHandler('new-id'),
+      ]),
+    );
+
+    const res = await post('/api/apply', VALID_BODY);
+
+    expect(res.status).toBe(200);
+    expect(listCalls).toBe(1);
+  });
+
+  it('6. writes happen sequentially — the second POST starts only after the first resolves', async () => {
+    let createCalls = 0;
+    let firstResolved = false;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        emptyListHandler(),
+        {
+          test: isCreateEntry,
+          respond: () => {
+            createCalls += 1;
+            if (createCalls === 1) {
+              return new Response(
+                new ReadableStream({
+                  async start(controller) {
+                    await new Promise((resolve) => setTimeout(resolve, 20));
+                    firstResolved = true;
+                    controller.enqueue(new TextEncoder().encode(JSON.stringify({ id: 'new-1' })));
+                    controller.close();
+                  },
+                }),
+                { status: 200, headers: { 'content-type': 'application/json' } },
+              );
+            }
+            // If this runs before the first POST's body finished streaming,
+            // the implementation is firing writes concurrently.
+            expect(firstResolved).toBe(true);
+            return jsonResponse({ id: 'new-2' });
+          },
+        },
+      ]),
+    );
+
+    const res = await post('/api/apply', VALID_BODY);
+
+    expect(res.status).toBe(200);
+    expect(createCalls).toBe(2);
+    expect(firstResolved).toBe(true);
+  });
+
+  it('7. a missing X-Clockify-Key -> 401', async () => {
+    const fetchMock = neverCalledFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await call('/api/apply', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(VALID_BODY),
+    });
+
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('8. an invalid host -> 400, no writes', async () => {
+    const fetchMock = neverCalledFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await post('/api/apply', { ...VALID_BODY, host: 'not-a-real-region' });
+
+    expect(res.status).toBe(400);
+    expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
