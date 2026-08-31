@@ -13,6 +13,7 @@ export default defineConfig([
       'coverage/',
       'public/app.js',
       'public/app.js.map',
+      '.superpowers/',
     ],
   },
   js.configs.recommended,
