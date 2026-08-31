@@ -6,8 +6,11 @@ export type Creds = { github: string; clockify: string };
 /**
  * Printable ASCII only. Wide enough for every real token shape — ghp_,
  * github_pat_, gho_, 40-hex classic, and Clockify's JWT-ish keys with '.',
- * '-' and '_' — while blocking CR/LF and control bytes, which make
- * `new Headers()` throw.
+ * '-' and '_' — while blocking CR/LF and other control bytes. Per the Fetch
+ * spec, `new Headers()` itself only rejects NUL, CR and LF; the rest of the
+ * control range (`\x01-\x08`, `\x0b`, `\x0c`, `\x1f`, `\x7f`) is accepted by
+ * Headers but rejected here anyway, as defense in depth against whatever
+ * this value is later forwarded into.
  */
 const SAFE_TOKEN = /^[\x21-\x7e]{20,255}$/;
 const MAX_BODY_BYTES = 128_000;
@@ -76,10 +79,22 @@ function readToken(c: Context, header: string): string {
 export const requireGithub = (c: Context) => readToken(c, 'X-GitHub-Token');
 export const requireClockify = (c: Context) => readToken(c, 'X-Clockify-Key');
 
-/** Read a JSON body with a hard size cap; chunked requests have no Content-Length. */
+/**
+ * Read a JSON body with a hard cap of `maxBytes` **bytes** (UTF-8), not
+ * characters. Rejects early on a stated `Content-Length` before buffering
+ * the body; chunked requests carry no `Content-Length`, so the post-read
+ * byte count is the fallback that catches those (and any request whose
+ * declared length undersells its actual size).
+ */
 export async function readCappedJson<T>(c: Context, maxBytes = MAX_BODY_BYTES): Promise<T> {
+  const contentLength = Number(c.req.header('Content-Length'));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new AppError(413, 'body_too_large', 'Request body too large');
+  }
   const text = await c.req.text();
-  if (text.length > maxBytes) throw new AppError(413, 'body_too_large', 'Request body too large');
+  if (new TextEncoder().encode(text).length > maxBytes) {
+    throw new AppError(413, 'body_too_large', 'Request body too large');
+  }
   try {
     return JSON.parse(text) as T;
   } catch {

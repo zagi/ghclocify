@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { Hono } from 'hono';
 import app from '../src/index';
 import type { Env } from '../src/index';
+import { guards, readCappedJson } from '../src/credentials';
+import { problem } from '../src/problems';
 import { env } from 'cloudflare:test';
 
 const ORIGIN = 'https://gh2clockify.example.workers.dev';
@@ -76,6 +79,29 @@ describe('credential and abuse guards', () => {
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
+  it('sets Cache-Control: no-store on a 404 (notFound) response', async () => {
+    const res = await call('/api/does-not-exist');
+    expect(res.status).toBe(404);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('sets Cache-Control: no-store on a 500 (onError) response', async () => {
+    // Production code has no route that throws an unhandled error, by
+    // design -- build a throw-away local app that mounts the same guards
+    // middleware plus a deliberately-throwing handler, rather than adding
+    // one to src/index.ts just to make this path reachable.
+    const errorApp = new Hono<{ Bindings: Env }>();
+    errorApp.use('/api/*', guards);
+    errorApp.get('/api/boom', () => {
+      throw new Error('boom');
+    });
+    errorApp.onError((err, c) => problem(c, err));
+
+    const res = await errorApp.request(`${ORIGIN}/api/boom`, {}, env);
+    expect(res.status).toBe(500);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
   it('degrades instead of 500ing when the RL_IP binding is absent', async () => {
     // `env` from cloudflare:test is typed as the ambient (unaugmented,
     // empty) Cloudflare.Env, since no worker-configuration.d.ts exists to
@@ -87,5 +113,39 @@ describe('credential and abuse guards', () => {
       envWithoutRateLimit,
     );
     expect(res.status).toBe(200);
+  });
+});
+
+describe('readCappedJson', () => {
+  // Local throw-away app: readCappedJson isn't wired into any production
+  // route yet (Tasks 11/12 do that), so it needs its own harness here.
+  const bodyApp = new Hono<{ Bindings: Env }>();
+  bodyApp.post('/body', async (c) => {
+    const data = await readCappedJson<unknown>(c, 128_000);
+    return c.json({ ok: true, received: data });
+  });
+  bodyApp.onError((err, c) => problem(c, err));
+
+  it('accepts a body under the byte cap', async () => {
+    const res = await bodyApp.request(
+      `${ORIGIN}/body`,
+      { method: 'POST', body: JSON.stringify({ hello: 'world' }) },
+      env,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects on byte length, not UTF-16 code-unit length', async () => {
+    // '☃' (U+2603) is one UTF-16 code unit but three UTF-8 bytes, so a
+    // 100,000-character string is only 100,002 chars as a JSON string
+    // literal -- comfortably under a 128,000 *character* cap -- but over
+    // 300,000 *bytes*, comfortably over a 128,000 *byte* cap.
+    const body = JSON.stringify('☃'.repeat(100_000));
+    expect(body.length).toBeLessThan(128_000);
+    expect(new TextEncoder().encode(body).length).toBeGreaterThan(128_000);
+
+    const res = await bodyApp.request(`${ORIGIN}/body`, { method: 'POST', body }, env);
+    expect(res.status).toBe(413);
+    expect((await res.json<{ error: string }>()).error).toBe('body_too_large');
   });
 });
