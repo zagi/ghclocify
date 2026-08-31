@@ -125,4 +125,81 @@ describe('buildPlan', () => {
     const match = existing({ id: 'match' });
     expect(findDuplicate(proposed(), [match], 'UTC')).toEqual(match);
   });
+
+  it('8. a null existing.projectId never matches, even against a proposed entry on the same day', () => {
+    // Guards against a future "helpful" change where a null projectId is
+    // made to fall back to some plan-level project id before comparison —
+    // that would start matching unassigned-project entries against
+    // everything, and today nothing would catch it. Plain `===` against a
+    // string is the only thing standing in the way.
+    const unassigned = existing({ id: 'no-project', projectId: null });
+    const plan = buildPlan([proposed({ projectId: 'proj1' })], [unassigned], {
+      timezone: 'UTC',
+      skipped: [],
+      warnings: [],
+    });
+    expect(plan.entries[0]?.status).toBe('new');
+    expect(plan.entries[0]?.existing).toBeUndefined();
+  });
+
+  it('9. two existing entries colliding on the same day and project: flagged duplicate regardless of which one `find` returns first', () => {
+    // `findDuplicate` uses Array#find, so the first matching entry in
+    // `existing` wins arbitrarily when more than one collides. Pinning that
+    // the *outcome* (status stays 'duplicate') does not depend on which one
+    // that is — documented behaviour, not an accident of iteration order.
+    const first = existing({ id: 'first-collision' });
+    const second = existing({ id: 'second-collision' });
+    const plan = buildPlan([proposed()], [first, second], {
+      timezone: 'UTC',
+      skipped: [],
+      warnings: [],
+    });
+    expect(plan.entries[0]?.status).toBe('duplicate');
+    expect([first, second]).toContainEqual(plan.entries[0]?.existing);
+  });
+
+  it('10. trust boundary: findDuplicate compares candidates against entry.date verbatim, never re-deriving it from entry.start — a caller-contract violation is not defended against here', () => {
+    // entry.date claims 2026-08-10 but entry.start is nowhere near that day
+    // (2026-08-03), simulating a caller bug — e.g. entry.date computed in a
+    // different zone than the `timezone` passed to findDuplicate/buildPlan.
+    // findDuplicate never reads entry.start at all, so it matches purely on
+    // the (here, inconsistent) entry.date. This is a deliberate, undefended
+    // caller contract — aggregate.ts is responsible for entry.date already
+    // being the local day of entry.start under the same timezone passed
+    // here — not a runtime-checked invariant: a defensive re-derivation
+    // would cost every call in this hot, pure function to guard a bug that
+    // belongs to the caller to get right once. This test pins that trust
+    // explicitly rather than leaving it a silent assumption.
+    const inconsistentEntry = proposed({
+      date: '2026-08-10',
+      start: '2026-08-03T09:00:00Z',
+    });
+    const matchesStatedDate = existing({ id: 'trust-boundary', start: '2026-08-10T09:00:00Z' });
+
+    const plan = buildPlan([inconsistentEntry], [matchesStatedDate], {
+      timezone: 'UTC',
+      skipped: [],
+      warnings: [],
+    });
+    // Matches on entry.date (08-10), completely ignoring that entry.start
+    // (08-03) disagrees with it — proof the module trusts entry.date as-is.
+    expect(plan.entries[0]?.status).toBe('duplicate');
+    expect(plan.entries[0]?.existing).toEqual(matchesStatedDate);
+  });
+
+  it('11. existing.end: null (a running timer) is still matchable as a duplicate', () => {
+    const runningTimer = existing({ id: 'running', end: null });
+    const plan = buildPlan([proposed()], [runningTimer], {
+      timezone: 'UTC',
+      skipped: [],
+      warnings: [],
+    });
+    expect(plan.entries[0]?.status).toBe('duplicate');
+    expect(plan.entries[0]?.existing).toEqual(runningTimer);
+  });
+
+  it('12. an unparseable existing.start fails loudly rather than silently non-matching', () => {
+    const bad = existing({ id: 'bad-start', start: 'not-a-date' });
+    expect(() => findDuplicate(proposed(), [bad], 'UTC')).toThrow();
+  });
 });
