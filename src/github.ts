@@ -319,7 +319,14 @@ export async function fetchSearch(
   if (p.scope.kind === 'org' && !isOwner(p.scope.org)) {
     throw new AppError(400, 'invalid_request', 'Invalid organization login');
   }
-  const allowed = new Set(p.repos);
+  // GitHub owner/repo names are case-insensitive, but the casing the caller
+  // supplied (and what `repoAliases` is keyed on, and what the UI displays)
+  // may not match the canonical casing GitHub returns in `repository_url`.
+  // Match case-insensitively, keyed by the lowercased full name, but always
+  // emit `Activity.repo` in the caller's supplied form — the same repo must
+  // carry one consistent string everywhere, or `describeDay`/`aggregate`
+  // silently treat it as two different repos.
+  const callerFormByLowerCase = new Map(p.repos.map((r) => [r.toLowerCase(), r] as const));
   const scopeQualifier = p.scope.kind === 'org' ? `org:${p.scope.org}` : `user:${p.login}`;
   // Bare UTC windows would not line up with the local-day buckets
   // aggregate.ts produces; the offset label keeps them aligned.
@@ -343,10 +350,12 @@ export async function fetchSearch(
   const { items, incomplete } = await searchAllPages(url, headers, `GitHub search (${p.source})`);
 
   const inScope = items
-    .map((item) => ({ item, repo: repoFromUrl(item.repository_url) }))
-    .filter(
-      (x): x is { item: GhSearchIssue; repo: string } => x.repo !== null && allowed.has(x.repo),
-    );
+    .map((item) => {
+      const canonical = repoFromUrl(item.repository_url);
+      const repo = canonical ? callerFormByLowerCase.get(canonical.toLowerCase()) : undefined;
+      return { item, repo };
+    })
+    .filter((x): x is { item: GhSearchIssue; repo: string } => x.repo !== undefined);
 
   if (p.source !== 'review') {
     const source = p.source;

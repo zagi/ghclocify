@@ -486,4 +486,112 @@ describe('github client', () => {
     expect(err.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("15. a search result whose repository_url casing differs from the caller's repos entry is still matched, not dropped", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        total_count: 1,
+        incomplete_results: false,
+        items: [
+          {
+            number: 7,
+            title: 'Casing PR',
+            html_url: 'https://github.com/Acme/Repo/pull/7',
+            // Canonical casing from GitHub differs from the caller's selection below.
+            repository_url: 'https://api.github.com/repos/Acme/Repo',
+            created_at: '2026-08-03T09:00:00Z',
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchSearch(TOKEN, {
+      source: 'pull_request',
+      login: 'octocat',
+      scope: { kind: 'personal' },
+      // Caller's selection is lowercase; GitHub's canonical casing is mixed-case.
+      repos: ['acme/repo'],
+      startKey: '2026-08-01',
+      endKey: '2026-08-31',
+      offsetLabel: '+00:00',
+    });
+
+    expect(result.activities).toHaveLength(1);
+  });
+
+  it("16. a commit and a search hit for the same repo, with the caller's casing differing from canonical, produce the same Activity.repo string", async () => {
+    const commitFetch = vi.fn().mockResolvedValue(
+      jsonResponse([
+        {
+          sha: 'sha-casing',
+          html_url: 'https://github.com/Acme/Repo/commit/sha-casing',
+          commit: { message: 'a commit', author: { date: '2026-08-03T09:00:00Z' } },
+        },
+      ]),
+    );
+    vi.stubGlobal('fetch', commitFetch);
+
+    // Caller selects the repo in lowercase — this is what fetchCommits echoes back.
+    const commitResult = await fetchCommits(TOKEN, {
+      repos: ['acme/repo'],
+      login: 'octocat',
+      sinceIso: '2026-08-03T00:00:00Z',
+      untilIso: '2026-08-04T00:00:00Z',
+    });
+
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+
+    const searchFetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        total_count: 1,
+        incomplete_results: false,
+        items: [
+          {
+            number: 7,
+            title: 'Casing PR',
+            html_url: 'https://github.com/Acme/Repo/pull/7',
+            // GitHub's canonical casing, different from the caller's lowercase selection.
+            repository_url: 'https://api.github.com/repos/Acme/Repo',
+            created_at: '2026-08-03T09:00:00Z',
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', searchFetch);
+
+    const searchResult = await fetchSearch(TOKEN, {
+      source: 'pull_request',
+      login: 'octocat',
+      scope: { kind: 'personal' },
+      repos: ['acme/repo'],
+      startKey: '2026-08-01',
+      endKey: '2026-08-31',
+      offsetLabel: '+00:00',
+    });
+
+    expect(commitResult.activities[0]?.repo).toBe('acme/repo');
+    expect(searchResult.activities[0]?.repo).toBe('acme/repo');
+    expect(commitResult.activities[0]?.repo).toBe(searchResult.activities[0]?.repo);
+  });
+
+  it('17. total_count > 1000 sets incomplete: true even when incomplete_results is false', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ total_count: 1500, incomplete_results: false, items: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchSearch(TOKEN, {
+      source: 'issue',
+      login: 'octocat',
+      scope: { kind: 'personal' },
+      repos: ['acme/repo'],
+      startKey: '2026-08-01',
+      endKey: '2026-08-31',
+      offsetLabel: '+00:00',
+    });
+
+    expect(result.incomplete).toBe(true);
+  });
 });
