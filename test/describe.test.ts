@@ -74,6 +74,37 @@ describe('describeDay', () => {
     const activities: Activity[] = [act({ repo: 'acme/dp', title: 'plain work no markers' })];
     expect(describeDay(activities, { 'acme/dp': 'DP' })).toBe('DP plain work no markers');
   });
+
+  it('pins the sort order of multiple distinct type markers', () => {
+    // Insertion order is fix-then-feat; alphabetical order is feat-then-fix.
+    // If the `.sort()` in describeDay were deleted or replaced with
+    // insertion order, the types segment would read "(fix) (feat)" instead.
+    const activities: Activity[] = [
+      act({
+        repo: 'acme/dp',
+        title: '(fix) resolve login redirect',
+        timestamp: '2026-08-03T09:00:00Z',
+      }),
+      act({ repo: 'acme/dp', title: '(feat) add sso support', timestamp: '2026-08-03T10:00:00Z' }),
+    ];
+    expect(describeDay(activities, { 'acme/dp': 'DP' })).toBe(
+      'DP (feat) (fix) (fix) resolve login redirect, (feat) add sso support',
+    );
+  });
+
+  it('does not dedupe type markers that differ only in case (mirrors the Python original, which added the raw matched substring to a set)', () => {
+    const activities: Activity[] = [
+      act({
+        repo: 'acme/dp',
+        title: '(fix) resolve login redirect',
+        timestamp: '2026-08-03T09:00:00Z',
+      }),
+      act({ repo: 'acme/dp', title: '(Fix) bump deps', timestamp: '2026-08-03T10:00:00Z' }),
+    ];
+    expect(describeDay(activities, { 'acme/dp': 'DP' })).toBe(
+      'DP (Fix) (fix) (fix) resolve login redirect, (Fix) bump deps',
+    );
+  });
 });
 
 describe('repoAlias', () => {
