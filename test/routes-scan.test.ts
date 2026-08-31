@@ -202,4 +202,18 @@ describe('scan routes', () => {
     expect(res.status).toBe(401);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('9. repos.length = 501 on /api/scan/search -> 400 invalid_request, and fetch is never called', async () => {
+    const fetchMock = neverCalledFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await post('/api/scan/search', {
+      ...VALID_SEARCH_BODY,
+      repos: Array.from({ length: 501 }, (_, i) => `acme/repo${i}`),
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

@@ -33,6 +33,19 @@ const MAX_COMMIT_REPOS = 8;
  */
 const MAX_SEARCH_WINDOW_DAYS = 31;
 
+/**
+ * `repos` on `/search` is a post-hoc *filter list*, not a fan-out: exactly
+ * one Search API query is issued per source regardless of how many repos
+ * are listed here, so this cap exists only to keep the in-memory filter
+ * map sane — it is not a work limit and must never be lowered to
+ * `MAX_COMMIT_REPOS`. Capping it that low would force the client to send
+ * repos in batches, and each batch's search would then discard hits
+ * belonging to the other batches — a user with 40 selected repos would
+ * silently lose results. The full selection must travel with every
+ * search call, so this is set generously.
+ */
+const MAX_SEARCH_REPOS = 500;
+
 /** `yyyy-MM-ddThh:mm:ssZ`, optionally with milliseconds — mirrors
  *  `routes/clockify.ts`'s `ISO_INSTANT_RE`; browsers commonly produce
  *  `toISOString()`, which always carries millis. */
@@ -53,18 +66,18 @@ function asRecord(value: unknown): Record<string, unknown> {
  * Validates every repo full-name before any upstream call. `fetchCommits`
  * repeats this check internally, but `fetchSearch` does not — so the route
  * layer is the only place both endpoints are guaranteed to reject a bad
- * repo before touching the network. `max` is omitted for `/search`, which
- * fans out on `source`, not per-repo, so a repo-count cap does not bound
- * its subrequest count the way it does for `/commits`.
+ * repo before touching the network. `max` differs by endpoint for a
+ * reason: `/commits` fans out one fetch per repo, so `MAX_COMMIT_REPOS`
+ * bounds subrequests; `/search` issues one query per source regardless of
+ * `repos.length` (a filter list, not a fan-out), so `MAX_SEARCH_REPOS` is
+ * a generous sanity bound, not a work limit.
  */
-function readRepos(value: unknown, max?: number): string[] {
-  if (!Array.isArray(value) || (max !== undefined && value.length > max)) {
+function readRepos(value: unknown, max: number): string[] {
+  if (!Array.isArray(value) || value.length > max) {
     throw new AppError(
       400,
       'invalid_request',
-      max !== undefined
-        ? `repos must be an array of at most ${max} repo full names`
-        : 'repos must be an array of repo full names',
+      `repos must be an array of at most ${max} repo full names`,
     );
   }
   return value.map((repo) => {
@@ -156,7 +169,7 @@ scanRoutes.post('/search', async (c) => {
   }
   const login = readLogin(body.login);
   const scope = readScope(body.scope);
-  const repos = readRepos(body.repos);
+  const repos = readRepos(body.repos, MAX_SEARCH_REPOS);
   const startKey = readDateKey(body.startKey, 'startKey');
   const endKey = readDateKey(body.endKey, 'endKey');
   const days = daysBetween(startKey, endKey);
