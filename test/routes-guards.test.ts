@@ -107,11 +107,12 @@ describe('credential and abuse guards', () => {
     // empty) Cloudflare.Env, since no worker-configuration.d.ts exists to
     // widen it -- cast to our own Env to destructure a known binding off it.
     const { RL_IP: _RL_IP, ...envWithoutRateLimit } = env as Env;
-    const res = await app.request(
-      `${ORIGIN}/api/clockify/context`,
-      { headers: { 'X-Clockify-Key': GOOD_TOKEN } },
-      envWithoutRateLimit,
-    );
+    // /api/health, not /api/clockify/context: since Task 10 gave that route
+    // real upstream behavior, hitting it here would depend on a live
+    // Clockify response for a fake key. /api/health exercises the same
+    // guards middleware (mounted on /api/*) with no upstream dependency,
+    // which is all this test is about.
+    const res = await app.request(`${ORIGIN}/api/health`, {}, envWithoutRateLimit);
     expect(res.status).toBe(200);
   });
 });
