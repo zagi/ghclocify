@@ -36,4 +36,16 @@ export default defineConfig([
       'no-console': 'off',
     },
   },
+  {
+    // Node build scripts run outside the browser/Workers runtime, so they
+    // need the Node globals (console, process) that the rest of the project
+    // deliberately excludes.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+      },
+    },
+  },
 ]);

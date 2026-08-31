@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>gh2clockify</title>
+    <meta
+      name="description"
+      content="Turn your GitHub activity into Clockify time entries. Your keys stay in this browser."
+    />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23b45309' stroke-width='2.5'/%3E%3Cpath d='M16 8v8l6 3' fill='none' stroke='%23b45309' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='16' r='2' fill='%23b45309'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="masthead">
+        <div class="brand">
+          <svg
+            class="brand-mark"
+            viewBox="0 0 32 32"
+            width="30"
+            height="30"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="2.5" />
+            <path
+              d="M16 8v8l6 3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <circle cx="16" cy="16" r="2" fill="currentColor" />
+          </svg>
+          <div>
+            <p class="brand-name">gh2clockify</p>
+            <p class="tagline">GitHub activity, logged as Clockify time.</p>
+          </div>
+        </div>
+        <button type="button" id="forget-btn" class="btn btn-ghost" hidden>
+          Forget saved keys
+        </button>
+      </header>
+
+      <nav class="stepper" aria-label="Import steps">
+        <ol>
+          <li class="stepper-item is-current" data-step="1">
+            <a href="#step-connect" aria-current="step">
+              <span class="stepper-num">01</span>
+              <span class="stepper-label">Connect</span>
+            </a>
+          </li>
+          <li class="stepper-item" data-step="2">
+            <a href="#step-scope">
+              <span class="stepper-num">02</span>
+              <span class="stepper-label">Scope</span>
+            </a>
+          </li>
+          <li class="stepper-item" data-step="3">
+            <a href="#step-mapping">
+              <span class="stepper-num">03</span>
+              <span class="stepper-label">Mapping</span>
+            </a>
+          </li>
+          <li class="stepper-item" data-step="4">
+            <a href="#step-preview">
+              <span class="stepper-num">04</span>
+              <span class="stepper-label">Preview &amp; import</span>
+            </a>
+          </li>
+        </ol>
+      </nav>
+
+      <main>
+        <!-- Step 1: Connect -->
+        <section id="step-connect" class="panel" aria-labelledby="step-connect-heading">
+          <h2 id="step-connect-heading">1. Connect</h2>
+          <p class="panel-intro">
+            Your token and API key are sent straight to GitHub and Clockify from this page. This
+            tool never stores them anywhere but your browser.
+          </p>
+
+          <form id="connect-form" novalidate>
+            <fieldset>
+              <legend>GitHub</legend>
+              <div class="field">
+                <label for="gh-pat">Personal access token</label>
+                <input
+                  type="password"
+                  id="gh-pat"
+                  name="gh-pat"
+                  autocomplete="off"
+                  spellcheck="false"
+                  required
+                />
+                <p class="field-hint">Fine-grained or classic, with read access to your repos.</p>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Clockify</legend>
+              <div class="field">
+                <label for="clockify-key">API key</label>
+                <input
+                  type="password"
+                  id="clockify-key"
+                  name="clockify-key"
+                  autocomplete="off"
+                  spellcheck="false"
+                  required
+                />
+                <p class="field-hint">Profile settings &rarr; API key, in your Clockify account.</p>
+              </div>
+
+              <div class="field-row">
+                <div class="field">
+                  <label for="clockify-region">Region</label>
+                  <select id="clockify-region" name="clockify-region">
+                    <option value="api" selected>Global (api)</option>
+                    <option value="euc1">EU Central (euc1)</option>
+                    <option value="use2">US East (use2)</option>
+                    <option value="euw2">EU West (euw2)</option>
+                    <option value="apse2">Asia Pacific (apse2)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="clockify-subdomain"
+                    >Custom subdomain <span class="field-optional">(optional)</span></label
+                  >
+                  <input
+                    type="text"
+                    id="clockify-subdomain"
+                    name="clockify-subdomain"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="e.g. mycompany"
+                  />
+                </div>
+              </div>
+            </fieldset>
+
+            <div class="field field-checkbox">
+              <input type="checkbox" id="remember" name="remember" />
+              <label for="remember">Remember on this device</label>
+              <p class="field-hint">
+                Stores your token and key in this browser's local storage, so you don't have to
+                paste them in again next month.
+              </p>
+            </div>
+
+            <div class="actions">
+              <button type="submit" id="verify-btn" class="btn btn-primary">
+                Verify connection
+              </button>
+            </div>
+          </form>
+
+          <div id="connect-result" class="result-card" role="status" aria-live="polite" hidden>
+            <dl>
+              <div>
+                <dt>GitHub</dt>
+                <dd id="connect-github-login">&mdash;</dd>
+              </div>
+              <div>
+                <dt>Clockify</dt>
+                <dd id="connect-clockify-user">&mdash;</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div id="plan-warning" class="banner banner-warning" role="alert" hidden>
+            <p>
+              This workspace is on Clockify's <strong>Free</strong> plan, which allows only 30 API
+              requests per hour. Large imports may be slow or need to be split up.
+            </p>
+          </div>
+
+          <div class="actions actions-nav">
+            <button type="button" id="connect-continue" class="btn btn-primary" disabled>
+              Continue to scope
+            </button>
+          </div>
+        </section>
+
+        <!-- Step 2: Scope -->
+        <section id="step-scope" class="panel" hidden aria-labelledby="step-scope-heading">
+          <h2 id="step-scope-heading">2. Scope</h2>
+          <p class="note">Only commits on each repository's default branch are counted.</p>
+
+          <form id="scope-form" novalidate>
+            <fieldset>
+              <legend>Date range</legend>
+              <div class="field-row preset-row" role="radiogroup" aria-label="Date range preset">
+                <div class="field-radio">
+                  <input
+                    type="radio"
+                    id="preset-this-month"
+                    name="date-preset"
+                    value="this-month"
+                    checked
+                  />
+                  <label for="preset-this-month">This month</label>
+                </div>
+                <div class="field-radio">
+                  <input
+                    type="radio"
+                    id="preset-last-month"
+                    name="date-preset"
+                    value="last-month"
+                  />
+                  <label for="preset-last-month">Last month</label>
+                </div>
+                <div class="field-radio">
+                  <input type="radio" id="preset-custom" name="date-preset" value="custom" />
+                  <label for="preset-custom">Custom</label>
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="scope-start">Start date</label>
+                  <input type="date" id="scope-start" name="scope-start" required />
+                </div>
+                <div class="field">
+                  <label for="scope-end">End date</label>
+                  <input type="date" id="scope-end" name="scope-end" required />
+                </div>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Sources</legend>
+              <div class="field-row checkbox-row">
+                <div class="field-checkbox">
+                  <input
+                    type="checkbox"
+                    id="source-commits"
+                    name="source"
+                    value="commits"
+                    checked
+                  />
+                  <label for="source-commits">Commits</label>
+                </div>
+                <div class="field-checkbox">
+                  <input type="checkbox" id="source-pulls" name="source" value="pulls" checked />
+                  <label for="source-pulls">Pull requests</label>
+                </div>
+                <div class="field-checkbox">
+                  <input type="checkbox" id="source-issues" name="source" value="issues" />
+                  <label for="source-issues">Issues</label>
+                </div>
+                <div class="field-checkbox">
+                  <input type="checkbox" id="source-reviews" name="source" value="reviews" />
+                  <label for="source-reviews">Reviews</label>
+                </div>
+              </div>
+            </fieldset>
+
+            <div class="field">
+              <label for="scope-account">Account</label>
+              <select id="scope-account" name="scope-account">
+                <option value="personal" selected>Personal</option>
+              </select>
+            </div>
+
+            <fieldset>
+              <legend>Repositories</legend>
+              <div class="field">
+                <label for="repo-filter">Filter</label>
+                <div class="repo-controls">
+                  <input
+                    type="search"
+                    id="repo-filter"
+                    name="repo-filter"
+                    placeholder="Filter repositories&hellip;"
+                  />
+                  <button type="button" id="repo-select-all" class="btn btn-ghost">
+                    Select all
+                  </button>
+                </div>
+              </div>
+              <ul id="repo-list" class="repo-list" aria-label="Repositories">
+                <li class="repo-list-empty" id="repo-list-empty">
+                  Verify your connection to load repositories.
+                </li>
+              </ul>
+            </fieldset>
+
+            <div class="actions actions-nav">
+              <button type="button" id="scope-back" class="btn btn-ghost">Back</button>
+              <button type="button" id="scope-continue" class="btn btn-primary" disabled>
+                Continue to mapping
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Step 3: Mapping -->
+        <section id="step-mapping" class="panel" hidden aria-labelledby="step-mapping-heading">
+          <h2 id="step-mapping-heading">3. Mapping</h2>
+
+          <form id="mapping-form" novalidate>
+            <div class="field-row">
+              <div class="field">
+                <label for="mapping-workspace">Workspace</label>
+                <select id="mapping-workspace" name="mapping-workspace" required></select>
+              </div>
+              <div class="field">
+                <label for="mapping-project">Project</label>
+                <select id="mapping-project" name="mapping-project" required></select>
+              </div>
+            </div>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="hours-per-day">Hours per day</label>
+                <input
+                  type="number"
+                  id="hours-per-day"
+                  name="hours-per-day"
+                  min="0.25"
+                  max="24"
+                  step="0.25"
+                  value="8"
+                  required
+                />
+              </div>
+              <div class="field">
+                <label for="start-time">Start time</label>
+                <input type="time" id="start-time" name="start-time" value="09:00" required />
+              </div>
+              <div class="field">
+                <label for="mapping-timezone">Timezone</label>
+                <input
+                  type="text"
+                  id="mapping-timezone"
+                  name="mapping-timezone"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="e.g. Europe/Warsaw"
+                />
+              </div>
+            </div>
+
+            <div class="field-row checkbox-row">
+              <div class="field-checkbox">
+                <input type="checkbox" id="mapping-billable" name="mapping-billable" />
+                <label for="mapping-billable">Billable</label>
+              </div>
+              <div class="field-checkbox">
+                <input type="checkbox" id="mapping-weekends" name="mapping-weekends" />
+                <label for="mapping-weekends">Include weekends</label>
+              </div>
+            </div>
+
+            <div class="actions actions-nav">
+              <button type="button" id="mapping-back" class="btn btn-ghost">Back</button>
+              <button type="button" id="mapping-continue" class="btn btn-primary" disabled>
+                Scan activity
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Step 4: Preview & Import -->
+        <section id="step-preview" class="panel" hidden aria-labelledby="step-preview-heading">
+          <h2 id="step-preview-heading">4. Preview &amp; import</h2>
+
+          <div id="scan-progress-wrap" hidden>
+            <div
+              class="progress"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              id="scan-progress"
+              aria-labelledby="scan-status"
+            >
+              <div class="progress-fill" id="scan-progress-fill"></div>
+            </div>
+            <p id="scan-status" role="status" aria-live="polite">Scanning repositories&hellip;</p>
+          </div>
+
+          <div id="preview-table-wrap" class="table-wrap" hidden>
+            <table>
+              <caption class="sr-only">
+                Daily activity, one row per day
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">
+                    <input type="checkbox" id="preview-select-all" aria-label="Select all days" />
+                  </th>
+                  <th scope="col">Date</th>
+                  <th scope="col">Day</th>
+                  <th scope="col">Activity</th>
+                  <th scope="col">Repositories</th>
+                  <th scope="col">Description</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody id="preview-rows">
+                <tr>
+                  <td colspan="7" class="table-empty">No scan results yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p id="preview-totals" class="totals" hidden>0 of 0 days selected &mdash; 0 entries</p>
+
+          <div class="actions actions-nav">
+            <button type="button" id="preview-back" class="btn btn-ghost">Back</button>
+            <button type="button" id="import-btn" class="btn btn-primary" disabled>
+              Import entries
+            </button>
+          </div>
+
+          <div id="import-results" class="result-card" hidden>
+            <h3>Import results</h3>
+            <ul id="import-results-list"></ul>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <p>
+          gh2clockify runs entirely in this page. Nothing you enter is sent anywhere but GitHub and
+          Clockify.
+        </p>
+      </footer>
+    </div>
+
+    <div id="status-region" class="sr-only" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
