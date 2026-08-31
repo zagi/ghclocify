@@ -77,6 +77,25 @@ describe('fetchJson', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('does not retry a non-retryable, unlisted status (405) and surfaces it as upstream_rejected, not upstream_error', async () => {
+    // A definitive refusal `fetchJson` doesn't special-case (unlike 400/404/
+    // 409/422/451) must still be distinguishable from a genuinely ambiguous
+    // outcome (a retryable status exhausted, or a network failure) -- code
+    // consumers like apply.ts's isAmbiguousFailure rely on this split to
+    // avoid treating "the server flatly refused" the same as "we don't know
+    // if it landed".
+    const fetchMock = vi.fn().mockResolvedValue(errorResponse(405));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = await expectAppError(fetchJson('https://api.github.com/foo', {}, { retries: 2 }));
+
+    expect(err.status).toBe(405);
+    expect(err.code).toBe('upstream_rejected');
+    // Not retried even though the budget would have allowed it: a
+    // non-retryable status is never worth a second attempt.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does not retry a 401 and surfaces upstream_unauthorized', async () => {
     const fetchMock = vi.fn().mockResolvedValue(errorResponse(401));
     vi.stubGlobal('fetch', fetchMock);

@@ -14,9 +14,10 @@ import type { Env } from '../index';
 import { requireClockify, readCappedJson } from '../credentials';
 import { AppError } from '../problems';
 import { isClockifyHost, isClockifyId, isDateKey } from '../validate';
-import { isValidTimezone, toClockifyIso } from '../timezone';
+import { isValidTimezone, localDayOf, toClockifyIso } from '../timezone';
 import { baseUrl, createEntry, listEntries } from '../clockify';
 import { findDuplicate } from '../plan';
+import { CLOCKIFY_MAX_DESCRIPTION } from '../describe';
 import type { ApplyResult, ProposedEntry } from '../types';
 
 export const applyRoutes = new Hono<{ Bindings: Env }>();
@@ -35,11 +36,6 @@ const DAY_MS = 86_400_000;
  *  routes' `ISO_INSTANT_RE` (which tolerates millis) is deliberate: this is
  *  the write path. */
 const ISO_INSTANT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
-
-/** Mirrors `describe.ts`'s `CLOCKIFY_MAX_DESCRIPTION` — duplicated rather
- *  than imported to keep this route's validation self-contained; both are
- *  Clockify's documented server limit and must not drift apart. */
-const MAX_DESCRIPTION_CODEPOINTS = 3000;
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -86,8 +82,20 @@ function requireTimezone(body: Record<string, unknown>): string {
  * `findDuplicate` reads is checked strictly; `activityCount`/`repos` (unused
  * by the write itself) get only a shallow type check, since a malformed
  * value there cannot cause a bad write.
+ *
+ * `timezone` is required here — not just for validation shape, but because
+ * `entry.date` is never trusted as-is. `findDuplicate` (plan.ts) matches an
+ * existing entry against `entry.date`, the CLAIMED local day, not anything
+ * derived from `entry.start`. A client (or a bug) that sends a `start`
+ * instant on one day but a `date` on another would make the pre-write
+ * duplicate check look on the wrong day and silently miss a real duplicate
+ * — a write-time double-booking that needs no ambiguous failure at all to
+ * trigger. So `entry.date` is verified against the local day `localDayOf`
+ * actually derives from `entry.start`, and rejected outright on a mismatch
+ * rather than silently corrected: a mismatch means the caller has a bug,
+ * and quietly overwriting it would hide that from whoever sent it.
  */
-function readEntry(value: unknown): ProposedEntry {
+function readEntry(value: unknown, timezone: string): ProposedEntry {
   if (typeof value !== 'object' || value === null) {
     throw new AppError(400, 'invalid_request', 'Each entry must be an object');
   }
@@ -96,21 +104,33 @@ function readEntry(value: unknown): ProposedEntry {
   if (typeof e.date !== 'string' || !isDateKey(e.date)) {
     throw new AppError(400, 'invalid_request', 'entry.date must be a YYYY-MM-DD date');
   }
-  if (typeof e.start !== 'string' || !ISO_INSTANT_RE.test(e.start)) {
+  if (
+    typeof e.start !== 'string' ||
+    !ISO_INSTANT_RE.test(e.start) ||
+    Number.isNaN(Date.parse(e.start))
+  ) {
     throw new AppError(400, 'invalid_request', 'entry.start must be an ISO-8601 UTC instant');
   }
-  if (typeof e.end !== 'string' || !ISO_INSTANT_RE.test(e.end)) {
+  if (typeof e.end !== 'string' || !ISO_INSTANT_RE.test(e.end) || Number.isNaN(Date.parse(e.end))) {
     throw new AppError(400, 'invalid_request', 'entry.end must be an ISO-8601 UTC instant');
   }
   if (Date.parse(e.end) <= Date.parse(e.start)) {
     throw new AppError(400, 'invalid_request', 'entry.end must be after entry.start');
+  }
+  const actualDate = localDayOf(e.start, timezone);
+  if (actualDate !== e.date) {
+    throw new AppError(
+      400,
+      'invalid_request',
+      `entry.date (${e.date}) does not match the local day of entry.start in ${timezone} (${actualDate})`,
+    );
   }
   if (typeof e.description !== 'string') {
     throw new AppError(400, 'invalid_request', 'entry.description must be a string');
   }
   // Clockify's own server limits, mirrored so a bad entry 400s here rather
   // than surfacing as an opaque upstream rejection mid-batch.
-  if (Array.from(e.description).length > MAX_DESCRIPTION_CODEPOINTS) {
+  if (Array.from(e.description).length > CLOCKIFY_MAX_DESCRIPTION) {
     throw new AppError(400, 'invalid_request', "entry.description exceeds Clockify's length limit");
   }
   if (e.description.includes('<') || e.description.includes('>')) {
@@ -142,7 +162,7 @@ function readEntry(value: unknown): ProposedEntry {
 }
 
 /** Rule 1: caps the batch before any upstream call is made. */
-function readEntries(value: unknown): ProposedEntry[] {
+function readEntries(value: unknown, timezone: string): ProposedEntry[] {
   if (!Array.isArray(value) || value.length > MAX_ENTRIES) {
     throw new AppError(
       400,
@@ -150,16 +170,23 @@ function readEntries(value: unknown): ProposedEntry[] {
       `entries must be an array of at most ${MAX_ENTRIES}`,
     );
   }
-  return value.map(readEntry);
+  return value.map((entry) => readEntry(entry, timezone));
 }
 
 /**
  * A "may or may not have landed" failure: the fetch itself failed (network
- * error, timeout) or the response was a retryable status Clockify kept
- * returning (`fetchJson` gives up on those as `upstream_error`, since
- * `createEntry` now runs with `retries: 0`). Everything else — a clean 400
- * rejection, 401/403 — is unambiguous: Clockify actively refused the
- * request, so nothing was created, and no recheck is needed.
+ * error, timeout — `upstream_timeout`) or the response was a genuinely
+ * retryable status (429/408/5xx) that `fetchJson` gave up on after
+ * `createEntry`'s `retries: 0` (`upstream_error`). Both mean Clockify may
+ * have processed the write before we lost the signal.
+ *
+ * Everything else is unambiguous and must NOT trigger a recheck: `http.ts`
+ * throws `upstream_rejected` both for the explicitly-listed definitive
+ * statuses (400/404/409/422/451) and for any other non-retryable status it
+ * doesn't special-case (e.g. 405, 418) — a flat refusal, never processed.
+ * Treating those as ambiguous would spend a free-tier workspace's scarce
+ * 30-requests/hour budget on a needless recheck GET for a write we already
+ * know failed.
  */
 function isAmbiguousFailure(err: unknown): boolean {
   return (
@@ -195,8 +222,10 @@ applyRoutes.post('/', async (c) => {
   const base = resolveBase(body);
   const workspaceId = requireClockifyIdField(body, 'workspaceId');
   const userId = requireClockifyIdField(body, 'userId');
+  // Read before entries: readEntries/readEntry need it to verify entry.date
+  // against entry.start rather than trusting the client's claimed date.
   const timezone = requireTimezone(body);
-  const entries = readEntries(body.entries);
+  const entries = readEntries(body.entries, timezone);
 
   const results: ApplyResult[] = [];
   if (entries.length === 0) return c.json({ results });
@@ -243,7 +272,14 @@ applyRoutes.post('/', async (c) => {
       } else if (err instanceof AppError) {
         results.push({ date: entry.date, ok: false, error: err.message });
       } else {
-        throw err;
+        // Still rule 4: an unexpected (non-AppError) exception must not
+        // abort the batch either — record it and let the caller learn
+        // which entries succeeded, same as every other failure shape.
+        results.push({
+          date: entry.date,
+          ok: false,
+          error: err instanceof Error ? err.message : 'Unexpected error',
+        });
       }
     }
   }

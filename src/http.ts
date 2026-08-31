@@ -79,7 +79,21 @@ export async function fetchJson<T>(
     if ([400, 404, 409, 422, 451].includes(res.status)) {
       throw new AppError(res.status, 'upstream_rejected', `${label}: ${await safeText(res)}`);
     }
-    if (!isRetryable(res.status) || attempt === retries) {
+    if (!isRetryable(res.status)) {
+      // A definitive rejection this function doesn't special-case above
+      // (e.g. 405, 418): the upstream refused the request outright, not an
+      // ambiguous "might have been processed" outcome, so callers that
+      // distinguish the two (apply.ts's isAmbiguousFailure) must not see
+      // this folded into the same 'upstream_error' bucket as a genuinely
+      // retryable status that got exhausted below.
+      const detail = await safeText(res);
+      throw new AppError(
+        res.status,
+        'upstream_rejected',
+        `${label}: unexpected status ${res.status}: ${detail}`,
+      );
+    }
+    if (attempt === retries) {
       await drain(res);
       break;
     }

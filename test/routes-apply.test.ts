@@ -298,4 +298,117 @@ describe('apply route', () => {
     expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('9. entry.date must match the local day of entry.start -- a mismatch is rejected 400, no fetch issued', async () => {
+    const fetchMock = neverCalledFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      // start is still 2026-08-01T09:00:00Z; date claims a different day.
+      entries: [{ ...ENTRY_1, date: '2026-01-01' }],
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('10. a mismatched date can no longer smuggle a duplicate write past the pre-check', async () => {
+    // Mirrors the exploit this closes: a proposed entry whose `start` truly
+    // falls on 2026-08-03 (where a matching entry already exists) but
+    // claims an unrelated `date`. Before the fix, `findDuplicate` compared
+    // against the false claimed date and could miss the real duplicate,
+    // reaching `createEntry` and writing a second entry on 2026-08-03. Now
+    // the mismatch is rejected before any fetch is issued at all, so the
+    // "existing" entry below is never even queried for.
+    const fetchMock = routedFetch([
+      existingEntryHandler('2026-08-03T09:00:00Z'),
+      { test: isCreateEntry, respond: () => jsonResponse({ id: 'should-not-happen' }) },
+    ]);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      entries: [
+        {
+          ...ENTRY_1,
+          date: '2026-01-01',
+          start: '2026-08-03T09:00:00Z',
+          end: '2026-08-03T17:00:00Z',
+        },
+      ],
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('11. a definitive but unlisted POST failure (405) is recorded as a failure without triggering a recheck GET', async () => {
+    let listCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        {
+          test: isListEntries,
+          respond: () => {
+            listCalls += 1;
+            return jsonResponse([], { headers: { 'Last-Page': 'true' } });
+          },
+        },
+        { test: isCreateEntry, respond: () => errorResponse(405) },
+      ]),
+    );
+
+    const res = await post('/api/apply', { ...VALID_BODY, entries: [ENTRY_1] });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toEqual([expect.objectContaining({ date: '2026-08-01', ok: false })]);
+    // Only the batch-level pre-check GET -- a 405 is a definitive refusal,
+    // not an ambiguous one, so it must not spend a second GET on a recheck.
+    expect(listCalls).toBe(1);
+  });
+
+  it('12. an ambiguous POST failure (500) triggers a recheck GET and reports success if the write actually landed', async () => {
+    let listCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        {
+          test: isListEntries,
+          respond: () => {
+            listCalls += 1;
+            if (listCalls === 1) {
+              // Batch-level pre-check: nothing exists yet.
+              return jsonResponse([], { headers: { 'Last-Page': 'true' } });
+            }
+            // Recheck after the ambiguous 500: the write actually landed.
+            return jsonResponse(
+              [
+                {
+                  id: 'landed-1',
+                  timeInterval: { start: ENTRY_1.start, end: null },
+                  description: 'x',
+                  projectId: PROJECT_ID,
+                },
+              ],
+              { headers: { 'Last-Page': 'true' } },
+            );
+          },
+        },
+        { test: isCreateEntry, respond: () => errorResponse(500) },
+      ]),
+    );
+
+    const res = await post('/api/apply', { ...VALID_BODY, entries: [ENTRY_1] });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toEqual([
+      { date: '2026-08-01', ok: true, skipped: true, error: 'Already exists' },
+    ]);
+    expect(listCalls).toBe(2);
+  });
 });
