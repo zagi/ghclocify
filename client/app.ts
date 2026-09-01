@@ -104,6 +104,20 @@ function errorMessage(err: unknown): string {
   return 'Unexpected error.';
 }
 
+/** These never recover mid-scan: every remaining chunk/window would fail
+ *  the exact same way, so downgrading each to its own warning just floods
+ *  the (3-warning-truncated) display with identical noise instead of
+ *  surfacing the one thing the user actually needs to fix. */
+const FATAL_SCAN_CODES = new Set([
+  'invalid_credentials',
+  'upstream_unauthorized',
+  'upstream_saml_required',
+]);
+
+function isFatalScanError(err: unknown): boolean {
+  return err instanceof ApiError && FATAL_SCAN_CODES.has(err.code);
+}
+
 function clockifyLocation(prefs: State['prefs']): ClockifyLocation {
   return { host: prefs.region, subdomain: prefs.subdomain };
 }
@@ -216,6 +230,7 @@ function invalidateScan(): void {
     s.scan.progress = 0;
     s.existingEntries = [];
     s.existingEntriesFingerprint = null;
+    s.existingEntriesError = null;
     s.plan = null;
     s.checkedDates = new Set();
   });
@@ -364,6 +379,7 @@ async function runScan(): Promise<void> {
   const activities: Activity[] = [];
   const warnings: string[] = [];
   let incompleteAny = false;
+  let fatalError: string | null = null;
 
   const { sinceIso, untilIso } = utcRangeForLocalDays(startDate, endDate, tz);
 
@@ -377,6 +393,10 @@ async function runScan(): Promise<void> {
       activities.push(...result.activities);
       warnings.push(...result.warnings);
     } catch (err) {
+      if (isFatalScanError(err)) {
+        fatalError = errorMessage(err);
+        break;
+      }
       warnings.push(errorMessage(err));
     }
     doneChunks += 1;
@@ -386,6 +406,7 @@ async function runScan(): Promise<void> {
   }
 
   searchLoop: for (const source of searchSources) {
+    if (fatalError) break;
     for (const window of windows) {
       if (store.getState().scan.cancelRequested) break searchLoop;
       store.update((s) => {
@@ -406,6 +427,10 @@ async function runScan(): Promise<void> {
         warnings.push(...result.warnings);
         if (result.incomplete) incompleteAny = true;
       } catch (err) {
+        if (isFatalScanError(err)) {
+          fatalError = errorMessage(err);
+          break searchLoop;
+        }
         warnings.push(errorMessage(err));
       }
       doneChunks += 1;
@@ -415,6 +440,16 @@ async function runScan(): Promise<void> {
       // GitHub Search allows 30 requests/minute; pace between windows.
       if (doneChunks < totalChunks) await sleep(2000);
     }
+  }
+
+  if (fatalError) {
+    store.update((s) => {
+      s.scan.status = 'error';
+      s.scan.error = fatalError;
+      s.scan.progress = 100;
+    });
+    announce('Scan failed.');
+    return;
   }
 
   if (incompleteAny) {
@@ -458,11 +493,17 @@ async function loadExistingEntriesAndRecompute(): Promise<void> {
       store.update((s) => {
         s.existingEntries = entries;
         s.existingEntriesFingerprint = fp;
+        s.existingEntriesError = null;
       });
     } catch (err) {
       const message = errorMessage(err);
+      // A dedicated banner, not folded into scan.warnings: that list is
+      // truncated to 3 in the UI, and a handful of routine repo warnings
+      // ahead of this one would make the message that the duplicate
+      // preview is unreliable invisible -- every day would show "New" with
+      // no visible explanation of why the check couldn't be trusted.
       store.update((s) => {
-        s.scan.warnings = [...s.scan.warnings, `Could not check for duplicate entries: ${message}`];
+        s.existingEntriesError = `Could not check for duplicate entries: ${message}`;
       });
     }
   }
@@ -489,9 +530,17 @@ async function runImport(): Promise<void> {
   announce(`Import started: ${checked.length} entries.`);
 
   const userId = s0.connect.clockifyUser?.id ?? '';
+  const batches = chunksOf(checked, APPLY_CHUNK);
 
-  for (const batch of chunksOf(checked, APPLY_CHUNK)) {
+  for (const [batchIndex, batch] of batches.entries()) {
     if (store.getState().importing.stopRequested) break;
+    // Modest inter-batch pacing, same idea as runScan's 2s sleep between
+    // search windows: RL_IP is 30 requests/60s keyed on CF-Connecting-IP,
+    // and users behind corporate NAT share that key with everyone else
+    // behind it. Firing every batch back-to-back has no reason to be fast
+    // enough to matter and every reason to collide with someone else's
+    // budget.
+    if (batchIndex > 0) await sleep(2000);
     const proposed: ProposedEntry[] = batch.map((e) => ({
       date: e.date,
       start: e.start,
@@ -584,6 +633,14 @@ function wireConnectStep(): void {
     const value = (e.target as HTMLInputElement).value;
     store.update((s) => {
       s.credentials.github = value;
+      // A changed token invalidates any previous verification: without
+      // this, a user can verify with token A, paste token B, and keep a
+      // green "verified" badge (and an enabled Continue) while every
+      // downstream call actually runs as token B. Force a re-verify.
+      s.connect.githubStatus = 'idle';
+      s.connect.githubError = null;
+      s.connect.viewer = null;
+      s.connect.orgs = [];
     });
     if (store.getState().prefs.remember) {
       saveStoredCredentials(
@@ -596,6 +653,13 @@ function wireConnectStep(): void {
     const value = (e.target as HTMLInputElement).value;
     store.update((s) => {
       s.credentials.clockify = value;
+      // Same reasoning as the GitHub token above: this is the exact bug
+      // finding #4 in the review closes — verify with key A, paste key B,
+      // keep a green badge, and import with A's userId under B's key.
+      s.connect.clockifyStatus = 'idle';
+      s.connect.clockifyError = null;
+      s.connect.clockifyUser = null;
+      s.connect.workspaces = [];
     });
     if (store.getState().prefs.remember) {
       saveStoredCredentials(
@@ -609,6 +673,13 @@ function wireConnectStep(): void {
     const value = (e.target as HTMLSelectElement).value;
     store.update((s) => {
       s.prefs.region = value;
+      // The region/subdomain choice picks which Clockify account "clockify
+      // key" is even verified against — changing it stales the same way a
+      // changed key does.
+      s.connect.clockifyStatus = 'idle';
+      s.connect.clockifyError = null;
+      s.connect.clockifyUser = null;
+      s.connect.workspaces = [];
     });
     savePrefs(store.getState().prefs);
   });
@@ -616,6 +687,10 @@ function wireConnectStep(): void {
     const value = (e.target as HTMLInputElement).value;
     store.update((s) => {
       s.prefs.subdomain = value;
+      s.connect.clockifyStatus = 'idle';
+      s.connect.clockifyError = null;
+      s.connect.clockifyUser = null;
+      s.connect.workspaces = [];
     });
     savePrefs(store.getState().prefs);
   });
@@ -800,6 +875,7 @@ function wireMappingStep(): void {
       s.mapping.projectsWorkspaceId = null;
       s.existingEntries = [];
       s.existingEntriesFingerprint = null;
+      s.existingEntriesError = null;
     });
     savePrefs(store.getState().prefs);
     void loadProjects();

@@ -153,6 +153,27 @@ describe('nextPageUrl', () => {
   it('returns null when there is no Link header at all', () => {
     expect(nextPageUrl(new Headers())).toBeNull();
   });
+
+  it('returns null (not the URL) when the next link points off github.com — credential-forwarding guard', () => {
+    const headers = new Headers({
+      link: '<https://evil.example.com/steal>; rel="next"',
+    });
+    expect(nextPageUrl(headers)).toBeNull();
+  });
+
+  it('returns null for a next link on a github.com subdomain that is not api.github.com', () => {
+    const headers = new Headers({
+      link: '<https://raw.github.com/foo?page=2>; rel="next"',
+    });
+    expect(nextPageUrl(headers)).toBeNull();
+  });
+
+  it('returns null when the next link is not a valid absolute URL', () => {
+    const headers = new Headers({
+      link: '<not a url>; rel="next"',
+    });
+    expect(nextPageUrl(headers)).toBeNull();
+  });
 });
 
 describe('mapWithConcurrency', () => {

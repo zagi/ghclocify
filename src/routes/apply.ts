@@ -15,7 +15,7 @@ import { requireClockify, readCappedJson } from '../credentials';
 import { AppError } from '../problems';
 import { isClockifyHost, isClockifyId, isDateKey } from '../validate';
 import { isValidTimezone, localDayOf, toClockifyIso } from '../timezone';
-import { baseUrl, createEntry, listEntries } from '../clockify';
+import { baseUrl, createEntry, getUser, listEntries } from '../clockify';
 import { findDuplicate } from '../plan';
 import { CLOCKIFY_MAX_DESCRIPTION } from '../describe';
 import type { ApplyResult, ProposedEntry } from '../types';
@@ -227,6 +227,18 @@ applyRoutes.post('/', async (c) => {
   const timezone = requireTimezone(body);
   const entries = readEntries(body.entries, timezone);
 
+  // Belt and braces against a client-supplied userId that diverges from the
+  // API key's actual owner: listEntries (the pre-write duplicate check)
+  // inspects `userId`'s timeline, but createEntry always writes as the
+  // key's owner. If they diverge the pre-check silently inspects the wrong
+  // timeline and every entry looks new. The client is supposed to keep
+  // these in sync (re-verifying on credential change), but this route
+  // trusts nothing else the client sends, so it doesn't trust this either.
+  const me = await getUser(key, base);
+  if (me.id !== userId) {
+    throw new AppError(400, 'invalid_request', 'userId does not match the Clockify API key owner');
+  }
+
   const results: ApplyResult[] = [];
   if (entries.length === 0) return c.json({ results });
 
@@ -258,13 +270,49 @@ applyRoutes.post('/', async (c) => {
 
     try {
       const created = await createEntry(key, base, workspaceId, entry);
+      // Augment the in-memory `existing` list so a later entry in this same
+      // batch that happens to match this one (same day/project) is caught
+      // by findDuplicate rather than written a second time. The shipped
+      // client can't trigger this today — aggregate.ts buckets by day so
+      // plan dates are unique — but this route otherwise trusts nothing the
+      // client sends, and this was the one gap in that posture on the
+      // write path.
+      existing.push({
+        id: created.id,
+        start: entry.start,
+        end: entry.end,
+        description: entry.description,
+        projectId: entry.projectId,
+      });
       results.push({ date: entry.date, ok: true, entryId: created.id });
     } catch (err) {
       // Rule 4: one entry's failure never aborts the batch.
       if (isAmbiguousFailure(err)) {
         // Rule 5: never blindly retry. Find out what actually happened.
-        const landed = await recheckLanded(key, base, workspaceId, userId, timezone, entry);
-        if (landed) {
+        // Resolved via .then's two callbacks (rather than a `let` reassigned
+        // inside a try) so a recheck failure can never be mistaken for "it
+        // did not land": each outcome is its own branch, not a shared
+        // mutable flag.
+        const recheck = await recheckLanded(key, base, workspaceId, userId, timezone, entry).then(
+          (landed) => ({ recheckOk: true as const, landed }),
+          () => ({ recheckOk: false as const }),
+        );
+        if (!recheck.recheckOk) {
+          // Recheck itself failed: we still don't know. Report the original
+          // failure and let the next run's pre-check resolve it — never
+          // retry — but do NOT let this propagate out of the loop: that
+          // would discard every result already accumulated in this batch,
+          // including entries successfully written moments earlier. Worst
+          // exactly when it hurts most: on a free workspace over its cap,
+          // every POST 429s, triggering a recheck that also 429s.
+          results.push({
+            date: entry.date,
+            ok: false,
+            error: `${(err as AppError).message} (could not confirm whether it landed)`,
+          });
+          continue;
+        }
+        if (recheck.landed) {
           results.push({ date: entry.date, ok: true, skipped: true, error: 'Already exists' });
         } else {
           results.push({ date: entry.date, ok: false, error: (err as AppError).message });

@@ -81,8 +81,16 @@ async function fetchAllPages<T>(
       { headers },
       { label },
     );
+    // Definitive, header-independent termination: an empty (or non-array)
+    // page means there is nothing left to fetch, regardless of what the
+    // `Last-Page` header says or whether Clockify sends it at all. Do NOT
+    // add a `data.length < PAGE_SIZE` check here — if Clockify ever
+    // post-filters a page, that would truncate the existing-entries list
+    // early and *cause* duplicates. Empty-page is the only safe secondary
+    // condition.
+    if (!Array.isArray(data) || data.length === 0) break;
     items.push(...data);
-    if (resHeaders.get('last-page') === 'true') break;
+    if (resHeaders.get('last-page')?.toLowerCase() === 'true') break;
   }
   return items;
 }
@@ -133,7 +141,9 @@ export async function listWorkspaces(key: string, base: string): Promise<Workspa
     id: w.id,
     name: w.name,
     plan: w.featureSubscriptionType ?? 'UNKNOWN',
-    freeTier: w.featureSubscriptionType == null || w.featureSubscriptionType === 'FREE',
+    freeTier:
+      w.featureSubscriptionType == null ||
+      w.featureSubscriptionType.toUpperCase().startsWith('FREE'),
   }));
 }
 

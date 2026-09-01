@@ -55,6 +55,19 @@ function neverCalledFetch() {
 const isListEntries = (url: string) => url.includes('/user/') && url.includes('/time-entries');
 const isCreateEntry = (url: string, init?: RequestInit) =>
   !url.includes('/user/') && url.includes('/time-entries') && init?.method === 'POST';
+/** getUser hits `/user` exactly — no `/time-entries` suffix, so it's
+ *  distinguishable from both of the above by URL shape alone. */
+const isGetUser = (url: string) => url.endsWith('/user');
+
+/** The apply route now calls getUser(key, base) up front (finding #4: the
+ *  client-supplied userId must match the API key's actual owner), so every
+ *  test that expects the batch to proceed needs this handler wired in. */
+function userHandler(id: string) {
+  return {
+    test: isGetUser,
+    respond: () => jsonResponse({ id, name: 'Ann', email: 'ann@example.com' }),
+  };
+}
 
 function emptyListHandler() {
   return {
@@ -126,6 +139,7 @@ describe('apply route', () => {
     vi.stubGlobal(
       'fetch',
       routedFetch([
+        userHandler(UID),
         emptyListHandler(),
         {
           test: isCreateEntry,
@@ -150,6 +164,7 @@ describe('apply route', () => {
 
   it('2. an entry that already exists is skipped with no POST', async () => {
     const fetchMock = routedFetch([
+      userHandler(UID),
       existingEntryHandler(ENTRY_1.start),
       { test: isCreateEntry, respond: () => jsonResponse({ id: 'should-not-happen' }) },
     ]);
@@ -191,6 +206,7 @@ describe('apply route', () => {
     vi.stubGlobal(
       'fetch',
       routedFetch([
+        userHandler(UID),
         emptyListHandler(),
         {
           test: isCreateEntry,
@@ -217,6 +233,7 @@ describe('apply route', () => {
     vi.stubGlobal(
       'fetch',
       routedFetch([
+        userHandler(UID),
         {
           test: isListEntries,
           respond: () => {
@@ -240,6 +257,7 @@ describe('apply route', () => {
     vi.stubGlobal(
       'fetch',
       routedFetch([
+        userHandler(UID),
         emptyListHandler(),
         {
           test: isCreateEntry,
@@ -350,6 +368,7 @@ describe('apply route', () => {
     vi.stubGlobal(
       'fetch',
       routedFetch([
+        userHandler(UID),
         {
           test: isListEntries,
           respond: () => {
@@ -376,6 +395,7 @@ describe('apply route', () => {
     vi.stubGlobal(
       'fetch',
       routedFetch([
+        userHandler(UID),
         {
           test: isListEntries,
           respond: () => {
@@ -410,5 +430,65 @@ describe('apply route', () => {
       { date: '2026-08-01', ok: true, skipped: true, error: 'Already exists' },
     ]);
     expect(listCalls).toBe(2);
+  });
+
+  it('13. userId mismatching the API key owner is rejected 400 before any duplicate check or write', async () => {
+    const fetchMock = routedFetch([
+      userHandler('some-other-user-id'),
+      emptyListHandler(),
+      { test: isCreateEntry, respond: () => jsonResponse({ id: 'should-not-happen' }) },
+    ]);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await post('/api/apply', VALID_BODY);
+
+    expect(res.status).toBe(400);
+    expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
+    const postCalls = fetchMock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(postCalls).toHaveLength(0);
+  });
+
+  it('14. a recheck that itself fails does not discard results already accumulated in the batch', async () => {
+    // Two entries: the first POST fails ambiguously (500) and its recheck
+    // GET also fails (500) -- that must not wipe out the second entry's
+    // successful write, which happens after it in the same batch.
+    let listCalls = 0;
+    let createCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        userHandler(UID),
+        {
+          test: isListEntries,
+          respond: () => {
+            listCalls += 1;
+            if (listCalls === 1) {
+              // Batch-level pre-check: nothing exists yet.
+              return jsonResponse([], { headers: { 'Last-Page': 'true' } });
+            }
+            // The recheck after entry 1's ambiguous failure also fails.
+            return errorResponse(500);
+          },
+        },
+        {
+          test: isCreateEntry,
+          respond: () => {
+            createCalls += 1;
+            return createCalls === 1 ? errorResponse(500) : jsonResponse({ id: 'new-2' });
+          },
+        },
+      ]),
+    );
+
+    const res = await post('/api/apply', VALID_BODY);
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toHaveLength(2);
+    expect(body.results[0]).toEqual(expect.objectContaining({ date: '2026-08-01', ok: false }));
+    expect(body.results[0]?.error).toContain('could not confirm whether it landed');
+    expect(body.results[1]).toEqual({ date: '2026-08-02', ok: true, entryId: 'new-2' });
   });
 });

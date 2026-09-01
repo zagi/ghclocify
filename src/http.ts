@@ -125,9 +125,25 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 const LINK_NEXT = /<([^>]+)>\s*;\s*rel="next"/;
 
+/**
+ * Workers' `fetch` follows redirects by default and, unlike a browser, does
+ * not strip `Authorization` cross-origin — a redirect to an attacker-chosen
+ * host would carry the GitHub PAT straight to it. Only GitHub can populate
+ * this header today (the `link` header comes from GitHub's own response),
+ * so it is not live-exploitable, but pin it anyway: it is the classic
+ * credential-forwarding pattern, and this is the one place that value is
+ * ever fed back into another `fetch` call.
+ */
 export function nextPageUrl(headers: Headers): string | null {
   const link = headers.get('link');
-  return link ? (LINK_NEXT.exec(link)?.[1] ?? null) : null;
+  const next = link ? (LINK_NEXT.exec(link)?.[1] ?? null) : null;
+  if (next === null) return null;
+  try {
+    if (new URL(next).origin !== 'https://api.github.com') return null;
+  } catch {
+    return null;
+  }
+  return next;
 }
 
 export async function mapWithConcurrency<T, R>(

@@ -233,6 +233,38 @@ describe('clockify client', () => {
     ]);
   });
 
+  it('8c. listWorkspaces treats FREE_2026 (and other FREE-prefixed/cased values) as freeTier: true', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse([
+        { id: 'w5', name: 'Free 2026 WS', featureSubscriptionType: 'FREE_2026' },
+        { id: 'w6', name: 'lowercase free WS', featureSubscriptionType: 'free' },
+      ]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const workspaces = await listWorkspaces(KEY, BASE);
+
+    expect(workspaces).toEqual([
+      { id: 'w5', name: 'Free 2026 WS', plan: 'FREE_2026', freeTier: true },
+      { id: 'w6', name: 'lowercase free WS', plan: 'free', freeTier: true },
+    ]);
+  });
+
+  it('11. fetchAllPages terminates on an empty page even with no Last-Page header, not after MAX_PAGES', async () => {
+    const page1 = [{ id: 'p1', name: 'Project One', clientName: null }];
+    const fetchMock = vi
+      .fn()
+      // No Last-Page header at all on either response.
+      .mockResolvedValueOnce(jsonResponse(page1))
+      .mockResolvedValueOnce(jsonResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const projects = await listProjects(KEY, BASE, WS);
+
+    expect(projects).toEqual([{ id: 'p1', name: 'Project One', clientName: null }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('10. a failing createEntry POST is attempted exactly once (no automatic retry)', async () => {
     // Clockify has no idempotency key: a retried POST after a lost response
     // is exactly how a duplicate time entry gets created. `retries: 0`

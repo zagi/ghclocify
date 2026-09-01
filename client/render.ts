@@ -102,23 +102,6 @@ export function renderConnect(state: State): void {
   const checking = connect.githubStatus === 'checking' || connect.clockifyStatus === 'checking';
   verifyBtn.disabled = checking;
   verifyBtn.textContent = checking ? 'Verifying…' : 'Verify connection';
-
-  const warning = el('plan-warning');
-  const defaultWorkspace =
-    connect.workspaces.find((w) => w.id === state.prefs.workspaceId) ?? connect.workspaces[0];
-  if (bothOk && defaultWorkspace?.freeTier) {
-    warning.hidden = false;
-    const label = defaultWorkspace.plan === 'UNKNOWN' ? 'could not be determined' : 'is Free';
-    const p = warning.querySelector('p');
-    if (p) {
-      p.textContent =
-        defaultWorkspace.plan === 'UNKNOWN'
-          ? `This workspace's plan ${label}, so we're assuming it's on Clockify's Free plan (30 API requests per hour, workspace-wide) to be safe. Large imports may be slow or need to be split up.`
-          : `This workspace ${label} on Clockify, which allows only 30 API requests per hour, workspace-wide. Large imports may be slow or need to be split up.`;
-    }
-  } else {
-    warning.hidden = true;
-  }
 }
 
 // ---- step 2: scope ----
@@ -307,12 +290,46 @@ export function renderMapping(state: State): void {
   const ready =
     state.prefs.workspaceId !== '' && state.prefs.projectId !== '' && state.prefs.hoursPerDay > 0;
   (el('mapping-continue') as HTMLButtonElement).disabled = !ready;
+
+  // Keyed on the workspace actually selected in this step's own dropdown —
+  // not step 1's default (workspaces[0]), which the user may have since
+  // changed. Reads workspaceSelect.value (not state.prefs.workspaceId
+  // directly) so it stays correct even while workspaces are still loading
+  // and populateSelect has fallen back to a different option.
+  const warning = el('plan-warning');
+  const selectedWorkspace = state.connect.workspaces.find((w) => w.id === workspaceSelect.value);
+  if (selectedWorkspace?.freeTier) {
+    warning.hidden = false;
+    const label = selectedWorkspace.plan === 'UNKNOWN' ? 'could not be determined' : 'is Free';
+    const p = warning.querySelector('p');
+    if (p) {
+      p.textContent =
+        selectedWorkspace.plan === 'UNKNOWN'
+          ? `This workspace's plan ${label}, so we're assuming it's on Clockify's Free plan (30 API requests per hour, workspace-wide) to be safe. Large imports may be slow or need to be split up.`
+          : `This workspace ${label} on Clockify, which allows only 30 API requests per hour, workspace-wide. Large imports may be slow or need to be split up.`;
+    }
+  } else {
+    warning.hidden = true;
+  }
 }
 
 // ---- step 4: scan progress ----
 
 export function renderScanProgress(state: State): void {
   const { scan } = state;
+
+  // A dedicated banner for a failed duplicate-check fetch, kept separate
+  // from `scan.warnings` below (which is truncated to 3 entries) so this
+  // never gets crowded out.
+  const dupWarning = el('duplicate-check-warning');
+  if (state.existingEntriesError) {
+    dupWarning.hidden = false;
+    const p = dupWarning.querySelector('p');
+    if (p) p.textContent = state.existingEntriesError;
+  } else {
+    dupWarning.hidden = true;
+  }
+
   const wrap = el('scan-progress-wrap');
 
   if (scan.status === 'idle') {

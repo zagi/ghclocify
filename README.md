@@ -91,7 +91,7 @@ The region isn't something the API can tell you in advance, so if
 Clockify sign-in fails, this — the wrong region or subdomain, not a bad
 key — is the first thing to check.
 
-## Two honest limitations
+## Three honest limitations
 
 **Only commits on each repository's default branch are counted.** GitHub's
 commits endpoint, called without an explicit branch, returns commits
@@ -112,6 +112,16 @@ if it can't determine a workspace's plan at all (some legacy or
 edge-case responses omit the field), it assumes free and warns anyway,
 since that's the safer direction to be wrong in. If you're on a paid
 Clockify plan (50 requests/sec), this doesn't apply to you.
+
+**A day imported from a partial (cancelled) scan can never be corrected by
+re-scanning.** Duplicate detection matches on (day, project): once a day has
+a matching Clockify entry, every later scan sees that day as already
+imported and skips it — even if the scan that created it was cancelled
+early and only captured, say, one commit out of five for that day. This is
+inherent to the dedup rule that keeps re-running an import safe, not a
+defect, but it means a cancelled scan's entries should be checked (and
+corrected directly in Clockify, if needed) before you rely on a later
+full scan to fill in the rest.
 
 ## Local development
 

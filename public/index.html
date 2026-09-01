@@ -170,13 +170,6 @@
             </dl>
           </div>
 
-          <div id="plan-warning" class="banner banner-warning" role="alert" hidden>
-            <p>
-              This workspace is on Clockify's <strong>Free</strong> plan, which allows only 30 API
-              requests per hour. Large imports may be slow or need to be split up.
-            </p>
-          </div>
-
           <div class="actions actions-nav">
             <button type="button" id="connect-continue" class="btn btn-primary" disabled>
               Continue to scope
@@ -354,6 +347,13 @@
               </div>
             </div>
 
+            <div id="plan-warning" class="banner banner-warning" role="alert" hidden>
+              <p>
+                This workspace is on Clockify's <strong>Free</strong> plan, which allows only 30 API
+                requests per hour. Large imports may be slow or need to be split up.
+              </p>
+            </div>
+
             <div class="actions actions-nav">
               <button type="button" id="mapping-back" class="btn btn-ghost">Back</button>
               <button type="button" id="mapping-continue" class="btn btn-primary" disabled>
@@ -380,6 +380,16 @@
               <div class="progress-fill" id="scan-progress-fill"></div>
             </div>
             <p id="scan-status" role="status" aria-live="polite">Scanning repositories&hellip;</p>
+          </div>
+
+          <div
+            id="duplicate-check-warning"
+            class="banner banner-warning"
+            role="alert"
+            aria-live="polite"
+            hidden
+          >
+            <p></p>
           </div>
 
           <div id="preview-table-wrap" class="table-wrap" hidden>

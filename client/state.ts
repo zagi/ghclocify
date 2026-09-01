@@ -199,6 +199,13 @@ export type State = {
   existingEntries: ExistingEntry[];
   /** Cache-invalidation key for existingEntries: workspace + date range. */
   existingEntriesFingerprint: string | null;
+  /** Set when the duplicate-check fetch (existing Clockify entries) itself
+   *  fails. Rendered as its own banner rather than folded into
+   *  `scan.warnings` — that list is truncated to 3 in the UI, and a handful
+   *  of routine repo warnings ahead of this one would hide the message that
+   *  the duplicate preview is unreliable. Cleared on the next successful
+   *  fetch. */
+  existingEntriesError: string | null;
 
   plan: ImportPlan | null;
   checkedDates: Set<string>;
@@ -252,6 +259,7 @@ export function createInitialState(): State {
     },
     existingEntries: [],
     existingEntriesFingerprint: null,
+    existingEntriesError: null,
     plan: null,
     checkedDates: new Set(),
     importing: { status: 'idle', results: [], total: 0, completed: 0, stopRequested: false },
