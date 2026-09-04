@@ -4,8 +4,11 @@ Turn a stretch of your own GitHub activity — commits, pull requests, issues,
 reviews — into Clockify time entries, without ever handing your credentials
 to a third party. You pick a date range and a scope, preview exactly what
 will be written (including what already exists, so re-running a range is
-safe), and import. It replaces the monthly ritual of hand-editing a
-timesheet with a two-minute browser task.
+safe), and import. The preview shows an estimated duration, and you can
+opt in to browser notifications (background-only, revocable in browser
+settings) to be alerted when a scan or import finishes. It replaces the
+monthly ritual of hand-editing a timesheet with a two-minute browser
+task.
 
 Each GitHub issue you touched on a day becomes its own entry (activities that
 reference no issue share one "Other" entry), and the day's hours are split
@@ -95,6 +98,12 @@ subdomain workspace is scoped to that subdomain; a key from your default
 The region isn't something the API can tell you in advance, so if
 Clockify sign-in fails, this — the wrong region or subdomain, not a bad
 key — is the first thing to check.
+
+## Notifications
+
+Browser notifications are opt-in. When enabled, they fire only when this
+tab is in the background and can be revoked at any time in your browser
+settings.
 
 ## Three honest limitations
 
