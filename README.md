@@ -7,7 +7,7 @@ will be written (including what already exists, so re-running a range is
 safe), and import. It replaces the monthly ritual of hand-editing a
 timesheet with a two-minute browser task.
 
-Each GitHub issue you touched on a day becomes its own entry (commits that
+Each GitHub issue you touched on a day becomes its own entry (activities that
 reference no issue share one "Other" entry), and the day's hours are split
 evenly across them — or, if you untick that option, typed in per entry with
 a running total before you import.
@@ -185,10 +185,11 @@ diffing against existing Clockify entries, grouping a day's activity by
 referenced issue and splitting the hours across those groups — lives in
 plain, dependency-free TypeScript under `src/` (`aggregate.ts`,
 `describe.ts`, `timezone.ts`, `plan.ts`, `hours.ts`) that gets bundled
-into _both_ the Worker and the client script in `public/app.js`. The Worker itself never does anything long-running: it
-performs small, bounded calls to GitHub or Clockify — one chunk of repos,
-one search window, one batch of writes — and hands the result back, while
-the browser holds the accumulating state, drives the progress bar, and can
+into _both_ the Worker and the client script in `public/app.js`. The
+Worker itself never does anything long-running: it performs small,
+bounded calls to GitHub or Clockify — one chunk of repos, one search
+window, one batch of writes — and hands the result back, while the
+browser holds the accumulating state, drives the progress bar, and can
 retry or cancel any individual chunk. That split is what keeps every
 Worker invocation short and stateless: there is no in-progress import
 sitting on the server for a dropped connection to orphan.
