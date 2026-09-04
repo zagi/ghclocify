@@ -391,6 +391,16 @@ input[type='radio'] {
   padding: 0.55rem 1.1rem;
   border: 1px solid transparent;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 80ms ease;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .btn:disabled {
@@ -432,11 +442,6 @@ input[type='radio'] {
 
 .btn .icon {
   margin-right: 0.4rem;
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
 }
 
 .status-pill .icon {
@@ -777,6 +782,71 @@ td.hours-cell {
     opacity: 0;
     transform: translateY(8px);
   }
+}
+
+/* Motion */
+
+.panel.is-entering {
+  animation: panel-in 220ms ease-out;
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+#preview-rows tr {
+  animation: row-in 260ms ease-out both;
+  animation-delay: calc(var(--i, 0) * 25ms);
+}
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.progress.is-running .progress-fill {
+  position: relative;
+  overflow: hidden;
+}
+.progress.is-running .progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.35), transparent);
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.status-pill.is-fresh {
+  animation: pill-pop 260ms ease-out;
+}
+@keyframes pill-pop {
+  from {
+    transform: scale(0.85);
+    opacity: 0.4;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.totals {
+  transition: color 200ms ease;
 }
 
 @media (prefers-reduced-motion: reduce) {

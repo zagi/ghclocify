@@ -4,12 +4,14 @@
  * containers this module renders into) and calls these functions after every
  * state change. Visibility toggles use `el.hidden`; styling differences use
  * `classList`, never inline `style=` (the CSP forbids inline style/script
- * anyway) — the one exception is the progress bar's `width`, set through the
- * CSSOM (`el.style.width`), which is not what CSP's `style-src` restricts
- * (that governs `<style>` blocks and HTML `style="…"` attributes, not
- * runtime `element.style` writes) and is the only practical way to express a
- * continuously variable percentage against the existing `.progress-fill`
- * rule.
+ * anyway) — the exceptions are the progress bar's `width` and each preview
+ * row's `--i` stagger index, both set through the CSSOM (`el.style.width`,
+ * `el.style.setProperty('--i', …)`), which is not what CSP's `style-src`
+ * restricts (that governs `<style>` blocks and HTML `style="…"` attributes,
+ * not runtime `element.style` writes) and is the only practical way to
+ * express a continuously variable percentage against the existing
+ * `.progress-fill` rule, or a per-row animation delay against `#preview-rows
+ * tr`.
  */
 import { groupLabel } from '../src/aggregate';
 import { estimateImport, formatDuration, freeTierHours } from '../src/hours';
@@ -85,6 +87,8 @@ function weekdayLabel(dateKey: string): string {
 
 // ---- stepper ----
 
+let lastStep = 0;
+
 export function renderStepper(state: State): void {
   for (let step = 1; step <= 4; step += 1) {
     const item = document.querySelector<HTMLElement>(`.stepper-item[data-step="${step}"]`);
@@ -102,6 +106,21 @@ export function renderStepper(state: State): void {
   el('step-scope').hidden = state.step !== 2;
   el('step-mapping').hidden = state.step !== 3;
   el('step-preview').hidden = state.step !== 4;
+
+  if (state.step !== lastStep) {
+    for (const panel of document.querySelectorAll<HTMLElement>('.panel')) {
+      panel.classList.remove('is-entering');
+    }
+    const stepPanelIds: Record<number, string> = {
+      1: 'step-connect',
+      2: 'step-scope',
+      3: 'step-mapping',
+      4: 'step-preview',
+    };
+    const currentId = stepPanelIds[state.step];
+    if (currentId) el(currentId).classList.add('is-entering');
+    lastStep = state.step;
+  }
 }
 
 // ---- masthead ----
@@ -368,6 +387,8 @@ export function renderMapping(state: State): void {
 export function renderScanProgress(state: State): void {
   const { scan } = state;
 
+  el('scan-progress').classList.toggle('is-running', scan.status === 'running');
+
   // A dedicated banner for a failed duplicate-check fetch, kept separate
   // from `scan.warnings` below (which is truncated to 3 entries) so this
   // never gets crowded out.
@@ -552,9 +573,10 @@ export function renderPreviewTable(state: State): void {
     ? 'Each GitHub issue gets its own entry. Uncheck to set the hours of every entry by hand — "Hours per day" then only seeds the values.'
     : 'Manual mode: type the hours for each entry in the Hours column (e.g. 1.5 or 1,5). Re-check to go back to an even split.';
 
-  for (const entry of plan.entries) {
+  for (const [index, entry] of plan.entries.entries()) {
     const tr = document.createElement('tr');
     tr.dataset.date = entry.date;
+    tr.style.setProperty('--i', String(Math.min(index, 20)));
     if (entry.status === 'duplicate') tr.classList.add('is-duplicate');
 
     const selectTd = document.createElement('td');
@@ -677,6 +699,8 @@ export function renderPreviewTable(state: State): void {
 
 // ---- step 4: import results ----
 
+let renderedResults = 0;
+
 export function renderImportResults(state: State): void {
   const wrap = el('import-results');
   const list = el('import-results-list');
@@ -685,12 +709,13 @@ export function renderImportResults(state: State): void {
   if (importing.results.length === 0) {
     wrap.hidden = true;
     list.innerHTML = '';
+    renderedResults = 0;
     return;
   }
 
   wrap.hidden = false;
   list.innerHTML = '';
-  for (const result of importing.results) {
+  for (const [index, result] of importing.results.entries()) {
     const li = document.createElement('li');
     const pill = document.createElement('span');
     if (result.ok && !result.skipped) {
@@ -703,6 +728,7 @@ export function renderImportResults(state: State): void {
       pill.className = 'status-pill status-error';
       pill.append(icon('alert', { size: 12 }), document.createTextNode('Failed'));
     }
+    if (index >= renderedResults) pill.classList.add('is-fresh');
     li.appendChild(pill);
     const entry = state.plan?.entries.find((e) => e.key === result.key);
     const label = entry ? `${result.date} · ${groupLabel(entry.group)}` : result.date;
@@ -715,6 +741,7 @@ export function renderImportResults(state: State): void {
     }
     list.appendChild(li);
   }
+  renderedResults = importing.results.length;
 }
 
 // ---- top-level ----
