@@ -32,6 +32,7 @@ import {
 } from './state';
 import type { DatePreset, ScanSourceKey, State } from './state';
 import { renderAll, renderStaticIcons } from './render';
+import { createToaster } from './toast';
 import { aggregate } from '../src/aggregate';
 import { buildPlan, overflowingDates } from '../src/plan';
 import { dayKey, isValidTimezone, utcOffsetLabel, utcRangeForLocalDays } from '../src/timezone';
@@ -169,6 +170,7 @@ function announce(text: string): void {
 // ---- store + render loop ----
 
 const store = createStore(createInitialState());
+const toaster = createToaster(qs('toasts'));
 
 function render(): void {
   renderAll(store.getState(), hasStoredCredentials());
@@ -290,6 +292,28 @@ async function handleVerify(): Promise<void> {
     }
   });
   savePrefs(store.getState().prefs);
+
+  if (ghResult.status === 'rejected') {
+    toaster.push({
+      kind: 'error',
+      title: 'GitHub connection failed',
+      message: errorMessage(ghResult.reason),
+    });
+  }
+  if (cfResult.status === 'rejected') {
+    toaster.push({
+      kind: 'error',
+      title: 'Clockify connection failed',
+      message: errorMessage(cfResult.reason),
+    });
+  }
+  if (ghResult.status === 'fulfilled' && cfResult.status === 'fulfilled') {
+    toaster.push({
+      kind: 'success',
+      title: 'Connected',
+      message: `${ghResult.value.viewer.login} · ${cfResult.value.user.name}`,
+    });
+  }
 }
 
 // ---- Scope ----
@@ -312,10 +336,12 @@ async function loadRepos(): Promise<void> {
       s.scope.reposFingerprint = fp;
     });
   } catch (err) {
+    const message = errorMessage(err);
     store.update((s) => {
       s.scope.reposLoading = false;
-      s.scope.reposError = errorMessage(err);
+      s.scope.reposError = message;
     });
+    toaster.push({ kind: 'error', title: "Couldn't load repositories", message });
   }
 }
 
@@ -344,10 +370,12 @@ async function loadProjects(): Promise<void> {
     });
     savePrefs(store.getState().prefs);
   } catch (err) {
+    const message = errorMessage(err);
     store.update((s) => {
       s.mapping.projectsLoading = false;
-      s.mapping.projectsError = errorMessage(err);
+      s.mapping.projectsError = message;
     });
+    toaster.push({ kind: 'error', title: "Couldn't load projects", message });
   }
 }
 
@@ -464,6 +492,7 @@ async function runScan(): Promise<void> {
       s.scan.progress = 100;
     });
     announce('Scan failed.');
+    toaster.push({ kind: 'error', title: 'Scan failed', message: fatalError });
     return;
   }
 
@@ -480,6 +509,22 @@ async function runScan(): Promise<void> {
     s.scan.fingerprint = scopeFingerprint(s);
   });
   announce(cancelled ? 'Scan cancelled.' : `Scan complete: ${activities.length} activities found.`);
+  if (cancelled) {
+    toaster.push({
+      kind: 'warning',
+      title: 'Scan cancelled',
+      message: `${activities.length} activities gathered`,
+    });
+  } else {
+    toaster.push({
+      kind: 'success',
+      title: 'Scan complete',
+      message:
+        warnings.length > 0
+          ? `${activities.length} activities found, ${warnings.length} warnings`
+          : `${activities.length} activities found`,
+    });
+  }
 
   if (!cancelled) await loadExistingEntriesAndRecompute();
   else recomputePlan();
@@ -520,6 +565,7 @@ async function loadExistingEntriesAndRecompute(): Promise<void> {
       store.update((s) => {
         s.existingEntriesError = `Could not check for duplicate entries: ${message}`;
       });
+      toaster.push({ kind: 'warning', title: "Couldn't check for duplicates", message });
     }
   }
   recomputePlan();
@@ -605,6 +651,7 @@ async function runImport(): Promise<void> {
         ];
         s.importing.completed += batch.length;
       });
+      toaster.push({ kind: 'error', title: 'Import request failed', message });
     }
   }
 
@@ -612,6 +659,16 @@ async function runImport(): Promise<void> {
     s.importing.status = 'done';
   });
   announce('Import finished.');
+
+  const results = store.getState().importing.results;
+  const imported = results.filter((r) => r.ok && !r.skipped).length;
+  const skippedCount = results.filter((r) => r.skipped).length;
+  const failed = results.filter((r) => !r.ok).length;
+  toaster.push({
+    kind: failed > 0 ? 'warning' : 'success',
+    title: 'Import finished',
+    message: `${imported} imported · ${skippedCount} already existed · ${failed} failed`,
+  });
 }
 
 // ---- DOM wiring ----
