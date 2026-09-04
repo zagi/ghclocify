@@ -268,7 +268,14 @@ describe('buildPlan', () => {
       start: '2026-08-03T13:00:00Z',
       end: '2026-08-03T17:00:00Z',
     });
-    const firstLanded = existing({ id: 'ours', start: '2026-08-03T09:00:00Z' });
+    // `end` matches `first`'s own end (13:00) rather than the `existing()`
+    // helper's whole-day default: a landed entry that stops where `second`
+    // starts must not trip the overlap guard added for finding A.
+    const firstLanded = existing({
+      id: 'ours',
+      start: '2026-08-03T09:00:00Z',
+      end: '2026-08-03T13:00:00Z',
+    });
     expect(decideWrite(first, [firstLanded], 'UTC', planned)).toEqual({
       action: 'skip',
       reason: 'exists',
@@ -276,7 +283,11 @@ describe('buildPlan', () => {
     });
     expect(decideWrite(second, [firstLanded], 'UTC', planned)).toEqual({ action: 'write' });
     // Millisecond formatting differences do not matter: instants compare.
-    const ms = existing({ id: 'ms', start: '2026-08-03T09:00:00.000Z' });
+    const ms = existing({
+      id: 'ms',
+      start: '2026-08-03T09:00:00.000Z',
+      end: '2026-08-03T13:00:00Z',
+    });
     expect(decideWrite(second, [ms], 'UTC', planned)).toEqual({ action: 'write' });
   });
 
@@ -309,6 +320,67 @@ describe('buildPlan', () => {
     );
     expect(decideWrite(entry, [late], 'UTC', ['2026-08-03T07:00:00Z'])).toEqual({
       action: 'write',
+    });
+  });
+
+  it("19. an existing entry at a planned start but longer than the plan's entry blocks the later entries of its day", () => {
+    // A 1-issue day (09:00-17:00) already imported, now re-scanned into two
+    // issues (09:00-13:00, 13:00-17:00). The first entry's start matches the
+    // existing entry's start exactly -> 'exists'. The second entry's start
+    // (13:00) is itself a planned start, so it is NOT foreign and does not
+    // exact-match the existing entry's start either -- without the overlap
+    // guard it would be written, double-booking 13:00-17:00.
+    const planned = ['2026-08-03T09:00:00Z', '2026-08-03T13:00:00Z'];
+    const existingLong = existing({
+      id: 'long',
+      start: '2026-08-03T09:00:00Z',
+      end: '2026-08-03T17:00:00Z',
+    });
+    const second = proposed({
+      key: '2026-08-03|acme/demo#2',
+      group: 'acme/demo#2',
+      start: '2026-08-03T13:00:00Z',
+      end: '2026-08-03T17:00:00Z',
+    });
+    expect(decideWrite(second, [existingLong], 'UTC', planned)).toEqual({
+      action: 'skip',
+      reason: 'overlap',
+      existing: existingLong,
+    });
+  });
+
+  it('20. back-to-back entries written by an earlier batch do not block the next one', () => {
+    // The first entry landed with its own real end (09:00-13:00); a second
+    // entry starting exactly where the first ends must not be treated as
+    // overlapping it.
+    const planned = ['2026-08-03T09:00:00Z', '2026-08-03T13:00:00Z'];
+    const firstLanded = existing({
+      id: 'first',
+      start: '2026-08-03T09:00:00Z',
+      end: '2026-08-03T13:00:00Z',
+    });
+    const second = proposed({
+      key: '2026-08-03|acme/demo#2',
+      group: 'acme/demo#2',
+      start: '2026-08-03T13:00:00Z',
+      end: '2026-08-03T17:00:00Z',
+    });
+    expect(decideWrite(second, [firstLanded], 'UTC', planned)).toEqual({ action: 'write' });
+  });
+
+  it('21. a running timer (end: null) starting at a planned start blocks a later entry that overlaps it', () => {
+    const planned = ['2026-08-03T09:00:00Z', '2026-08-03T13:00:00Z'];
+    const runningTimer = existing({ id: 'running', start: '2026-08-03T09:00:00Z', end: null });
+    const second = proposed({
+      key: '2026-08-03|acme/demo#2',
+      group: 'acme/demo#2',
+      start: '2026-08-03T13:00:00Z',
+      end: '2026-08-03T17:00:00Z',
+    });
+    expect(decideWrite(second, [runningTimer], 'UTC', planned)).toEqual({
+      action: 'skip',
+      reason: 'overlap',
+      existing: runningTimer,
     });
   });
 });

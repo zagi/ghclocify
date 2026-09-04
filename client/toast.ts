@@ -23,6 +23,7 @@ const ICON_FOR: Record<ToastKind, IconName> = {
 export function createToaster(host: HTMLElement): Toaster {
   function dismiss(node: HTMLElement): void {
     if (!node.isConnected) return;
+    if (node.classList.contains('is-leaving')) return;
     node.classList.add('is-leaving');
     const remove = () => node.remove();
     node.addEventListener('animationend', remove, { once: true });
@@ -34,7 +35,6 @@ export function createToaster(host: HTMLElement): Toaster {
     push({ kind, title, message }) {
       const node = document.createElement('div');
       node.className = `toast toast-${kind}`;
-      if (kind === 'error') node.setAttribute('role', 'alert');
 
       const body = document.createElement('div');
       body.className = 'toast-body';

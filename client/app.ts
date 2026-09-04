@@ -40,6 +40,7 @@ import {
   requestNotifyPermission,
 } from './notify';
 import { aggregate } from '../src/aggregate';
+import { APPLY_CHUNK } from '../src/hours';
 import { buildPlan, overflowingDates } from '../src/plan';
 import { dayKey, isValidTimezone, utcOffsetLabel, utcRangeForLocalDays } from '../src/timezone';
 import type { Activity, ImportSettings, ProposedEntry } from '../src/types';
@@ -58,12 +59,12 @@ function chunksOf<T>(items: T[], size: number): T[][] {
 const REPO_CHUNK = 8;
 /** Matches the server's `MAX_SEARCH_WINDOW_DAYS` (src/routes/scan.ts). */
 const SEARCH_WINDOW_DAYS = 31;
-/** Matches the server's `MAX_ENTRIES` (src/routes/apply.ts). Batches are
- *  plain fixed-size chunks (`chunksOf`) — a day can now span several
- *  batches, because every request carries `dayStarts` for its days, which
- *  is what lets the route tell this import's earlier batches' entries from
- *  foreign ones instead of relying on batches being day-aligned. */
-const APPLY_CHUNK = 10;
+// APPLY_CHUNK is imported from src/hours.ts (mirrors the server's
+// MAX_ENTRIES, src/routes/apply.ts). Batches are plain fixed-size chunks
+// (`chunksOf`) — a day can now span several batches, because every request
+// carries `dayStarts` for its days, which is what lets the route tell this
+// import's earlier batches' entries from foreign ones instead of relying on
+// batches being day-aligned.
 
 function addDaysToKey(key: string, delta: number): string {
   const [y, m, d] = key.split('-').map(Number) as [number, number, number];
@@ -1102,6 +1103,15 @@ function wirePreviewStep(): void {
     const input = e.target as HTMLInputElement;
     if (input.checked) {
       const granted = await requestNotifyPermission();
+      if (!input.checked) {
+        // The user unchecked the box while the permission prompt was open —
+        // that later action wins, regardless of what the prompt returned.
+        store.update((s) => {
+          s.prefs.notifyWhenDone = false;
+        });
+        savePrefs(store.getState().prefs);
+        return;
+      }
       if (!granted) {
         input.checked = false;
         toaster.push({

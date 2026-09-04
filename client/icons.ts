@@ -7,8 +7,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  Bell,
-  Check,
   CheckCircle2,
   Clock,
   Copy,
@@ -28,8 +26,6 @@ import {
 export const ICONS = {
   alert: AlertTriangle,
   back: ArrowLeft,
-  bell: Bell,
-  check: Check,
   clock: Clock,
   connect: Plug,
   copy: Copy,

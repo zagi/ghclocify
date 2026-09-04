@@ -36,6 +36,13 @@ const SECONDS_PER_ENTRY = 0.5;
 const SECONDS_BETWEEN_BATCHES = 2;
 /** Clockify Free: 30 requests/hour workspace-wide; keep a margin. */
 const FREE_TIER_REQUESTS_PER_HOUR = 28;
+/** Each apply batch costs a getUser + a listEntries pre-check GET, besides
+ *  its POSTs — both count against the same workspace-wide budget. */
+const REQUESTS_PER_BATCH_OVERHEAD = 2;
+
+/** Mirrors the apply route's own `MAX_ENTRIES` (src/routes/apply.ts) and the
+ *  client's own batch size (client/app.ts). */
+export const APPLY_CHUNK = 10;
 
 export function estimateImport(
   count: number,
@@ -46,11 +53,12 @@ export function estimateImport(
   return { batches, seconds: count * SECONDS_PER_ENTRY + (batches - 1) * SECONDS_BETWEEN_BATCHES };
 }
 
-/** Hours a Free workspace needs: one POST per entry plus one pre-check GET per batch. */
+/** Hours a Free workspace needs: one POST per entry plus a getUser + a
+ *  pre-check GET per batch. */
 export function freeTierHours(count: number, batchSize: number): number {
   if (count <= 0) return 0;
   const { batches } = estimateImport(count, batchSize);
-  return Math.ceil((count + batches) / FREE_TIER_REQUESTS_PER_HOUR);
+  return Math.ceil((count + batches * REQUESTS_PER_BATCH_OVERHEAD) / FREE_TIER_REQUESTS_PER_HOUR);
 }
 
 export function formatDuration(seconds: number): string {

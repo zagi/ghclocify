@@ -14,14 +14,11 @@
  * tr`.
  */
 import { groupLabel } from '../src/aggregate';
-import { estimateImport, formatDuration, freeTierHours } from '../src/hours';
+import { APPLY_CHUNK, estimateImport, formatDuration, freeTierHours } from '../src/hours';
 import { overflowingDates } from '../src/plan';
 import type { PlannedEntry } from '../src/types';
 import { icon, type IconName } from './icons';
 import type { State } from './state';
-
-/** Mirrors client/app.ts APPLY_CHUNK and src/routes/apply.ts MAX_ENTRIES. */
-const APPLY_CHUNK = 10;
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -515,6 +512,8 @@ function restoreFocus(rowsEl: HTMLElement, capture: FocusCapture): void {
   }
 }
 
+let lastRowSetKey = '';
+
 export function renderPreviewTable(state: State): void {
   const wrap = el('preview-table-wrap');
   const totals = el('preview-totals');
@@ -530,6 +529,7 @@ export function renderPreviewTable(state: State): void {
     totals.hidden = true;
     freeWarning.hidden = true;
     rowsEl.innerHTML = '';
+    lastRowSetKey = '';
     (el('import-btn') as HTMLButtonElement).disabled = true;
     setButtonLabel(el('import-btn') as HTMLButtonElement, 'upload', 'Import entries');
     return;
@@ -644,6 +644,10 @@ export function renderPreviewTable(state: State): void {
     rowsEl.appendChild(tr);
   }
 
+  const rowSetKey = plan.entries.map((e) => e.key).join('\n');
+  rowsEl.classList.toggle('is-entering', rowSetKey !== lastRowSetKey);
+  lastRowSetKey = rowSetKey;
+
   restoreFocus(rowsEl, focusCapture);
 
   const selected = plan.entries.filter((e) => state.checkedKeys.has(e.key));
@@ -665,7 +669,8 @@ export function renderPreviewTable(state: State): void {
   if (workspace?.freeTier && selectedCount > 0) {
     const hours = freeTierHours(selectedCount, APPLY_CHUNK);
     freeWarning.hidden = false;
-    freeWarning.textContent = `Free Clockify plan: 30 API requests per hour, workspace-wide. This import needs about ${hours} hour${hours === 1 ? '' : 's'} and will start failing with 429 after ~28 entries — uncheck rows or import in stages.`;
+    const nextText = `Free Clockify plan: 30 API requests per hour, workspace-wide. This import needs about ${hours} hour${hours === 1 ? '' : 's'} and will start failing with 429 after roughly 24 entries — uncheck rows or import in stages.`;
+    if (freeWarning.textContent !== nextText) freeWarning.textContent = nextText;
   } else {
     freeWarning.hidden = true;
   }
@@ -699,7 +704,15 @@ export function renderPreviewTable(state: State): void {
 
 // ---- step 4: import results ----
 
-let renderedResults = 0;
+// `freshFrom` marks where the most recent GROWTH of `importing.results`
+// started; `lastResultCount` is the length as of the last render. Using the
+// growth boundary (rather than "the length as of the last render", which a
+// same-length re-render — e.g. the status flip to 'done' right after the
+// final batch's results are appended — would immediately invalidate before
+// the browser ever paints the `is-fresh` class) lets the newest batch's
+// pills keep animating across renders that don't add any new results.
+let freshFrom = 0;
+let lastResultCount = 0;
 
 export function renderImportResults(state: State): void {
   const wrap = el('import-results');
@@ -709,8 +722,14 @@ export function renderImportResults(state: State): void {
   if (importing.results.length === 0) {
     wrap.hidden = true;
     list.innerHTML = '';
-    renderedResults = 0;
+    freshFrom = 0;
+    lastResultCount = 0;
     return;
+  }
+
+  if (importing.results.length > lastResultCount) {
+    freshFrom = lastResultCount;
+    lastResultCount = importing.results.length;
   }
 
   wrap.hidden = false;
@@ -728,7 +747,7 @@ export function renderImportResults(state: State): void {
       pill.className = 'status-pill status-error';
       pill.append(icon('alert', { size: 12 }), document.createTextNode('Failed'));
     }
-    if (index >= renderedResults) pill.classList.add('is-fresh');
+    if (index >= freshFrom) pill.classList.add('is-fresh');
     li.appendChild(pill);
     const entry = state.plan?.entries.find((e) => e.key === result.key);
     const label = entry ? `${result.date} · ${groupLabel(entry.group)}` : result.date;
@@ -741,7 +760,6 @@ export function renderImportResults(state: State): void {
     }
     list.appendChild(li);
   }
-  renderedResults = importing.results.length;
 }
 
 // ---- top-level ----

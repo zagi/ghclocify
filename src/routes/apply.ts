@@ -205,18 +205,24 @@ function readDayStarts(
   entries: ProposedEntry[],
   timezone: string,
 ): Record<string, string[]> {
-  const raw = asRecord(value);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new AppError(400, 'invalid_request', 'dayStarts must be an object keyed by YYYY-MM-DD');
+  }
+  const raw = value as Record<string, unknown>;
   const out: Record<string, string[]> = {};
   let total = 0;
   for (const [date, list] of Object.entries(raw)) {
     if (!isDateKey(date)) {
       throw new AppError(400, 'invalid_request', 'dayStarts keys must be YYYY-MM-DD dates');
     }
-    if (!Array.isArray(list) || list.length > MAX_STARTS_PER_DAY) {
+    if (!Array.isArray(list)) {
+      throw new AppError(400, 'invalid_request', `dayStarts[${date}] must be an array`);
+    }
+    if (list.length > MAX_STARTS_PER_DAY) {
       throw new AppError(
         400,
         'invalid_request',
-        `dayStarts[${date}] must be an array of at most ${MAX_STARTS_PER_DAY} instants`,
+        `dayStarts[${date}] must hold at most ${MAX_STARTS_PER_DAY} instants`,
       );
     }
     total += list.length;
@@ -313,7 +319,15 @@ applyRoutes.post('/', async (c) => {
   // key's owner. If they diverge the pre-check silently inspects the wrong
   // timeline and every entry looks new. The client is supposed to keep
   // these in sync (re-verifying on credential change), but this route
-  // trusts nothing else the client sends, so it doesn't trust this either.
+  // re-verifies everything it can rather than trusting the client's word:
+  // ids, dates, starts, which local day each entry belongs to, and (in
+  // decideWrite) whether an entry's interval overlaps something already in
+  // Clockify. The one thing genuinely taken on faith is `dayStarts` — which
+  // planned starts belong to THIS import, used to tell an earlier batch's
+  // own write from a foreign entry — and even that is only ever used to
+  // narrow what counts as "ours"; decideWrite's overlap guard below is the
+  // server-side backstop that catches a double-booking regardless of what
+  // `dayStarts` claims.
   const me = await getUser(key, base);
   if (me.id !== userId) {
     throw new AppError(400, 'invalid_request', 'userId does not match the Clockify API key owner');

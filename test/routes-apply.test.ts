@@ -76,7 +76,7 @@ function emptyListHandler() {
   };
 }
 
-function existingEntryHandler(start: string) {
+function existingEntryHandler(start: string, end: string | null = null) {
   return {
     test: isListEntries,
     respond: () =>
@@ -84,7 +84,7 @@ function existingEntryHandler(start: string) {
         [
           {
             id: 'existing-1',
-            timeInterval: { start, end: null },
+            timeInterval: { start, end },
             description: 'already logged',
             projectId: PROJECT_ID,
           },
@@ -750,7 +750,10 @@ describe('apply route', () => {
       'fetch',
       routedFetch([
         userHandler(UID),
-        existingEntryHandler('2026-08-01T09:00:00Z'),
+        // Batch 1's real write has an end (09:00-13:00) -- with a real end
+        // this entry does not overlap the second entry (13:00-17:00), so
+        // the write path is exercised rather than the overlap guard.
+        existingEntryHandler('2026-08-01T09:00:00Z', '2026-08-01T13:00:00Z'),
         {
           test: isCreateEntry,
           respond: () => {
@@ -906,5 +909,44 @@ describe('apply route', () => {
     ).toBe(400);
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('25. an existing entry at a planned start but spanning the whole day blocks a later batch entry that overlaps it (finding A)', async () => {
+    // A 1-issue day (09:00-17:00) already imported; the plan has since been
+    // re-scanned into two issues (09:00-13:00, 13:00-17:00). This request
+    // only carries the second entry (13:00-17:00) -- its start is itself a
+    // planned start, so it is not foreign and it does not exact-match the
+    // existing entry's start either. Without the overlap guard this would be
+    // written, double-booking 13:00-17:00 on top of the existing 09:00-17:00
+    // entry.
+    const fetchMock = routedFetch([
+      userHandler(UID),
+      existingEntryHandler('2026-08-01T09:00:00Z', '2026-08-01T17:00:00Z'),
+      { test: isCreateEntry, respond: () => jsonResponse({ id: 'should-not-happen' }) },
+    ]);
+    vi.stubGlobal('fetch', fetchMock);
+    const second = {
+      ...ENTRY_1,
+      key: '2026-08-01|acme/repo#2',
+      group: 'acme/repo#2',
+      start: '2026-08-01T13:00:00Z',
+      end: '2026-08-01T17:00:00Z',
+    };
+
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      entries: [second],
+      dayStarts: { '2026-08-01': ['2026-08-01T09:00:00Z', '2026-08-01T13:00:00Z'] },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toEqual([
+      { date: '2026-08-01', key: second.key, ok: true, skipped: true, error: 'Already exists' },
+    ]);
+    const postCalls = fetchMock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(postCalls).toHaveLength(0);
   });
 });

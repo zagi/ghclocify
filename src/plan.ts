@@ -60,7 +60,8 @@ export function findLanded(
 }
 
 export type WriteDecision =
-  { action: 'write' } | { action: 'skip'; reason: 'foreign' | 'exists'; existing: ExistingEntry };
+  | { action: 'write' }
+  | { action: 'skip'; reason: 'foreign' | 'exists' | 'overlap'; existing: ExistingEntry };
 
 /**
  * The write route's pre-write check for one entry, given every start
@@ -71,8 +72,9 @@ export type WriteDecision =
  * this import or by an identical earlier run — or FOREIGN: anything else
  * (a hand-made entry, an import with a different hours layout, another
  * tab). One foreign entry marks the whole day as already imported, exactly
- * the rule the preview applies; an "ours" entry blocks only its own start.
- * That is what lets a day span several batches without double-booking.
+ * the rule the preview applies; an "ours" entry blocks only its own start —
+ * unless it also overlaps this entry's interval (see below), in which case
+ * it blocks this entry too.
  */
 export function decideWrite(
   entry: ProposedEntry,
@@ -91,6 +93,16 @@ export function decideWrite(
   const start = Date.parse(entry.start);
   const same = onDay.find((candidate) => Date.parse(candidate.start) === start);
   if (same) return { action: 'skip', reason: 'exists', existing: same };
+  const end = Date.parse(entry.end);
+  // An existing entry at a planned start may still be LONGER than the plan's
+  // entry there (a 1-issue day re-scanned into 2 issues). Anything that
+  // overlaps this entry's interval blocks it; a running timer (end === null)
+  // occupies the rest of the day.
+  const overlap = onDay.find((candidate) => {
+    const candidateEnd = candidate.end === null ? Infinity : Date.parse(candidate.end);
+    return Date.parse(candidate.start) < end && candidateEnd > start;
+  });
+  if (overlap) return { action: 'skip', reason: 'overlap', existing: overlap };
   return { action: 'write' };
 }
 

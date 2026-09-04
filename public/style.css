@@ -444,10 +444,6 @@ input[type='radio'] {
   margin-right: 0.4rem;
 }
 
-.status-pill .icon {
-  margin-right: 0.25rem;
-}
-
 th .icon {
   margin-right: 0.25rem;
   opacity: 0.7;
@@ -643,6 +639,7 @@ tbody tr.is-duplicate td:not(:first-child) {
   font-weight: 600;
   font-size: 0.9rem;
   margin: 0 0 1rem;
+  transition: color 200ms ease;
 }
 
 .totals.is-error {
@@ -799,7 +796,7 @@ td.hours-cell {
     transform: none;
   }
 }
-#preview-rows tr {
+#preview-rows.is-entering tr {
   animation: row-in 260ms ease-out both;
   animation-delay: calc(var(--i, 0) * 25ms);
 }
@@ -844,9 +841,6 @@ td.hours-cell {
     transform: none;
     opacity: 1;
   }
-}
-.totals {
-  transition: color 200ms ease;
 }
 
 @media (prefers-reduced-motion: reduce) {

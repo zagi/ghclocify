@@ -51,11 +51,13 @@ describe('estimateImport', () => {
     expect(estimateImport(40, 10)).toEqual({ batches: 4, seconds: 26 });
   });
 
-  it('11. freeTierHours budgets 28 requests per hour for entries plus one pre-check per batch', () => {
-    expect(freeTierHours(3, 10)).toBe(1); // 3 + 1 = 4 requests
-    expect(freeTierHours(27, 10)).toBe(2); // 27 + 3 = 30 > 28
-    expect(freeTierHours(40, 10)).toBe(2); // 40 + 4 = 44 -> 2 hours
+  it('11. freeTierHours budgets 28 requests per hour for entries plus a getUser + a pre-check GET per batch', () => {
+    expect(freeTierHours(3, 10)).toBe(1); // 1 batch: (3 + 1*2) / 28 = 5/28 -> 1
+    expect(freeTierHours(27, 10)).toBe(2); // 3 batches: (27 + 3*2) / 28 = 33/28 -> 2
+    expect(freeTierHours(40, 10)).toBe(2); // 4 batches: (40 + 4*2) / 28 = 48/28 -> 2
     expect(freeTierHours(0, 10)).toBe(0);
+    expect(freeTierHours(24, 10)).toBe(2); // 3 batches: (24 + 3*2) / 28 = 30/28 -> 2
+    expect(freeTierHours(26, 10)).toBe(2); // 3 batches: (26 + 3*2) / 28 = 32/28 -> 2
   });
 
   it('12. formatDuration renders seconds, minutes and hours compactly', () => {
