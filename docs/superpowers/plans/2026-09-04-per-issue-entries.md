@@ -1346,10 +1346,10 @@ In `initFormFromState()`, add `qs<HTMLInputElement>('split-evenly').checked = s.
 Run: `npm run ci && npm run build:client`
 Expected: all green; `public/app.js` rebuilt.
 
-- [ ] **Step 6: Commit** (include `public/app.js` — it is committed in this repo)
+- [ ] **Step 6: Commit** (`public/app.js` is gitignored and rebuilt at deploy time — do not add it)
 
 ```bash
-git add client/state.ts client/app.ts client/render.ts public/index.html public/app.js
+git add client/state.ts client/app.ts client/render.ts public/index.html
 git commit -m "feat: per-entry selection, split-evenly preference and manual hour overrides in the client
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
@@ -1471,7 +1471,7 @@ If `npm run dev` cannot run in the environment (no wrangler login is needed for 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add client/render.ts public/style.css public/app.js
+git add client/render.ts public/style.css
 git commit -m "feat: preview shows one row per issue with an editable hours column and a live total
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
