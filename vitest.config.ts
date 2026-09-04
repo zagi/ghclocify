@@ -13,6 +13,7 @@ export default defineConfig({
             'test/aggregate.test.ts',
             'test/plan.test.ts',
             'test/validate.test.ts',
+            'test/hours.test.ts',
           ],
           environment: 'node',
         },

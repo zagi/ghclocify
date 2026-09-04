@@ -11,6 +11,7 @@
     "src/describe.ts",
     "src/aggregate.ts",
     "src/plan.ts",
-    "src/validate.ts"
+    "src/validate.ts",
+    "src/hours.ts"
   ]
 }

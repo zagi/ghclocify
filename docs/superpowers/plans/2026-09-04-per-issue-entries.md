@@ -130,10 +130,10 @@ describe('batchByDay', () => {
       item('2026-08-04', 'd'),
       item('2026-08-05', 'e'),
     ];
+    // Days 04 (2) and 05 (1) fit together under max 3; day 03 + day 04 would be 4.
     expect(batchByDay(items, 3)).toEqual([
       [item('2026-08-03', 'a'), item('2026-08-03', 'b')],
-      [item('2026-08-04', 'c'), item('2026-08-04', 'd')],
-      [item('2026-08-05', 'e')],
+      [item('2026-08-04', 'c'), item('2026-08-04', 'd'), item('2026-08-05', 'e')],
     ]);
   });
 
