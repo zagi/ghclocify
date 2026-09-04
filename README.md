@@ -7,6 +7,11 @@ will be written (including what already exists, so re-running a range is
 safe), and import. It replaces the monthly ritual of hand-editing a
 timesheet with a two-minute browser task.
 
+Each GitHub issue you touched on a day becomes its own entry (commits that
+reference no issue share one "Other" entry), and the day's hours are split
+evenly across them — or, if you untick that option, typed in per entry with
+a running total before you import.
+
 It is a public tool: anyone can use it with their own GitHub personal
 access token and their own Clockify API key. There is no login, no account,
 and nothing shared between users except the code.
@@ -115,13 +120,15 @@ Clockify plan (50 requests/sec), this doesn't apply to you.
 
 **A day imported from a partial (cancelled) scan can never be corrected by
 re-scanning.** Duplicate detection matches on (day, project): once a day has
-a matching Clockify entry, every later scan sees that day as already
-imported and skips it — even if the scan that created it was cancelled
-early and only captured, say, one commit out of five for that day. This is
-inherent to the dedup rule that keeps re-running an import safe, not a
-defect, but it means a cancelled scan's entries should be checked (and
-corrected directly in Clockify, if needed) before you rely on a later
-full scan to fill in the rest.
+a matching Clockify entry, every later scan sees that whole day — every
+issue's entry on it — as already imported and skips it — even if the scan
+that created it was cancelled early and only captured, say, one commit out
+of five for that day. This is inherent to the dedup rule that keeps
+re-running an import safe, not a defect, but it means a cancelled scan's
+entries should be checked (and corrected directly in Clockify, if needed)
+before you rely on a later full scan to fill in the rest. The same rule
+means a day imported with one issue's entry cannot later gain a second
+issue's entry by re-scanning; add it in Clockify by hand.
 
 ## Local development
 
@@ -174,10 +181,11 @@ fine as-is.
 
 The browser is the orchestrator. All aggregation logic — bucketing
 activity into local calendar days, deduping, generating descriptions,
-diffing against existing Clockify entries — lives in plain, dependency-free
-TypeScript under `src/` (`aggregate.ts`, `describe.ts`, `timezone.ts`,
-`plan.ts`) that gets bundled into _both_ the Worker and the client script
-in `public/app.js`. The Worker itself never does anything long-running: it
+diffing against existing Clockify entries, grouping a day's activity by
+referenced issue and splitting the hours across those groups — lives in
+plain, dependency-free TypeScript under `src/` (`aggregate.ts`,
+`describe.ts`, `timezone.ts`, `plan.ts`, `hours.ts`) that gets bundled
+into _both_ the Worker and the client script in `public/app.js`. The Worker itself never does anything long-running: it
 performs small, bounded calls to GitHub or Clockify — one chunk of repos,
 one search window, one batch of writes — and hands the result back, while
 the browser holds the accumulating state, drives the progress bar, and can
