@@ -11,6 +11,7 @@
  * continuously variable percentage against the existing `.progress-fill`
  * rule.
  */
+import { groupLabel } from '../src/aggregate';
 import type { PlannedEntry } from '../src/types';
 import type { State } from './state';
 
@@ -398,7 +399,7 @@ export function renderPreviewTable(state: State): void {
     totals.hidden = true;
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 7;
+    td.colSpan = 9;
     td.className = 'table-empty';
     td.textContent = 'No activity found for this range.';
     tr.appendChild(td);
@@ -418,9 +419,9 @@ export function renderPreviewTable(state: State): void {
     const selectTd = document.createElement('td');
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
-    checkbox.dataset.dateCheckbox = entry.date;
-    checkbox.checked = state.checkedDates.has(entry.date);
-    checkbox.setAttribute('aria-label', `Include ${entry.date}`);
+    checkbox.dataset.keyCheckbox = entry.key;
+    checkbox.checked = state.checkedKeys.has(entry.key);
+    checkbox.setAttribute('aria-label', `Include ${entry.date} ${groupLabel(entry.group)}`);
     selectTd.appendChild(checkbox);
     tr.appendChild(selectTd);
 
@@ -457,9 +458,9 @@ export function renderPreviewTable(state: State): void {
     rowsEl.appendChild(tr);
   }
 
-  const selectedCount = plan.entries.filter((e) => state.checkedDates.has(e.date)).length;
+  const selectedCount = plan.entries.filter((e) => state.checkedKeys.has(e.key)).length;
   const selectedHours = plan.entries
-    .filter((e) => state.checkedDates.has(e.date))
+    .filter((e) => state.checkedKeys.has(e.key))
     .reduce((sum, e) => sum + (Date.parse(e.end) - Date.parse(e.start)) / 3_600_000, 0);
   totals.textContent = `${selectedCount} of ${plan.entries.length} days selected — ${selectedHours.toFixed(2)} hours`;
 

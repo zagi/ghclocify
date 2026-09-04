@@ -33,7 +33,8 @@ import {
 import type { DatePreset, ScanSourceKey, State } from './state';
 import { renderAll } from './render';
 import { aggregate } from '../src/aggregate';
-import { buildPlan } from '../src/plan';
+import { batchByDay } from '../src/hours';
+import { buildPlan, overflowingDates } from '../src/plan';
 import { dayKey, isValidTimezone, utcOffsetLabel, utcRangeForLocalDays } from '../src/timezone';
 import type { Activity, ImportSettings, ProposedEntry } from '../src/types';
 
@@ -51,8 +52,11 @@ function chunksOf<T>(items: T[], size: number): T[][] {
 const REPO_CHUNK = 8;
 /** Matches the server's `MAX_SEARCH_WINDOW_DAYS` (src/routes/scan.ts). */
 const SEARCH_WINDOW_DAYS = 31;
-/** Matches the server's `MAX_ENTRIES` (src/routes/apply.ts). */
-const APPLY_CHUNK = 5;
+/** Matches the server's `MAX_ENTRIES` (src/routes/apply.ts). Batches are
+ *  packed by whole days (`batchByDay`): the server's pre-write duplicate
+ *  check is day-level, so a day split across two batches would have its
+ *  second half skipped as "already exists". */
+const APPLY_CHUNK = 10;
 
 function addDaysToKey(key: string, delta: number): string {
   const [y, m, d] = key.split('-').map(Number) as [number, number, number];
@@ -191,7 +195,11 @@ function recomputePlan(): void {
       return;
     }
     const settings = buildSettings(s);
-    const { entries, skipped } = aggregate(s.scan.activities, settings);
+    // Overrides only count in manual mode; in even mode the plan is fully
+    // determined by the settings, and the stored overrides wait untouched
+    // for the next time the user unchecks the option.
+    const overrides = s.prefs.splitEvenly ? {} : s.entryHours;
+    const { entries, skipped } = aggregate(s.scan.activities, settings, overrides);
     const previousPlan = s.plan;
     const plan = buildPlan(entries, s.existingEntries, {
       timezone: settings.timezone,
@@ -200,21 +208,27 @@ function recomputePlan(): void {
     });
 
     const nextChecked = new Set<string>();
+    const liveKeys = new Set<string>();
     for (const entry of plan.entries) {
-      const previousEntry = previousPlan?.entries.find((e) => e.date === entry.date);
-      if (
-        previousEntry &&
-        previousEntry.status === entry.status &&
-        s.checkedDates.has(entry.date)
-      ) {
-        nextChecked.add(entry.date);
+      liveKeys.add(entry.key);
+      const previousEntry = previousPlan?.entries.find((e) => e.key === entry.key);
+      if (previousEntry && previousEntry.status === entry.status && s.checkedKeys.has(entry.key)) {
+        nextChecked.add(entry.key);
       } else if (!previousEntry && entry.status === 'new') {
-        nextChecked.add(entry.date);
+        nextChecked.add(entry.key);
       }
     }
 
+    // Drop overrides for entries that no longer exist (e.g. a timezone
+    // change moved an activity to another day).
+    const nextHours: Record<string, number> = {};
+    for (const [key, hours] of Object.entries(s.entryHours)) {
+      if (liveKeys.has(key)) nextHours[key] = hours;
+    }
+
     s.plan = plan;
-    s.checkedDates = nextChecked;
+    s.checkedKeys = nextChecked;
+    s.entryHours = nextHours;
   });
 }
 
@@ -232,7 +246,8 @@ function invalidateScan(): void {
     s.existingEntriesFingerprint = null;
     s.existingEntriesError = null;
     s.plan = null;
-    s.checkedDates = new Set();
+    s.checkedKeys = new Set();
+    s.entryHours = {};
   });
 }
 
@@ -515,8 +530,12 @@ async function loadExistingEntriesAndRecompute(): Promise<void> {
 async function runImport(): Promise<void> {
   const s0 = store.getState();
   if (!s0.plan) return;
-  const checked = s0.plan.entries.filter((e) => s0.checkedDates.has(e.date));
+  const checked = s0.plan.entries.filter((e) => s0.checkedKeys.has(e.key));
   if (checked.length === 0) return;
+  // Mirrors the apply route's own rejection (entry.date must be the local
+  // day of entry.start); render.ts already disables the button in this
+  // state, this is the belt to that brace.
+  if (overflowingDates(checked, s0.prefs.timezone).length > 0) return;
 
   store.update((s) => {
     s.importing = {
@@ -530,7 +549,7 @@ async function runImport(): Promise<void> {
   announce(`Import started: ${checked.length} entries.`);
 
   const userId = s0.connect.clockifyUser?.id ?? '';
-  const batches = chunksOf(checked, APPLY_CHUNK);
+  const batches = batchByDay(checked, APPLY_CHUNK);
 
   for (const [batchIndex, batch] of batches.entries()) {
     if (store.getState().importing.stopRequested) break;
@@ -621,6 +640,8 @@ function initFormFromState(): void {
   qs<HTMLInputElement>('source-pulls').checked = s.prefs.sources.pulls;
   qs<HTMLInputElement>('source-issues').checked = s.prefs.sources.issues;
   qs<HTMLInputElement>('source-reviews').checked = s.prefs.sources.reviews;
+
+  qs<HTMLInputElement>('split-evenly').checked = s.prefs.splitEvenly;
 
   savePrefs(store.getState().prefs);
 }
@@ -982,20 +1003,44 @@ function wirePreviewStep(): void {
     const checked = (e.target as HTMLInputElement).checked;
     store.update((s) => {
       if (!s.plan) return;
-      s.checkedDates = checked ? new Set(s.plan.entries.map((entry) => entry.date)) : new Set();
+      s.checkedKeys = checked ? new Set(s.plan.entries.map((entry) => entry.key)) : new Set();
     });
+  });
+
+  qs<HTMLInputElement>('split-evenly').addEventListener('change', (e) => {
+    const checked = (e.target as HTMLInputElement).checked;
+    store.update((s) => {
+      s.prefs.splitEvenly = checked;
+    });
+    savePrefs(store.getState().prefs);
+    recomputePlan();
   });
 
   qs('preview-rows').addEventListener('change', (e) => {
     const target = e.target;
-    if (!(target instanceof HTMLInputElement) || !target.dataset.dateCheckbox) return;
-    const date = target.dataset.dateCheckbox;
-    store.update((s) => {
-      const set = new Set(s.checkedDates);
-      if (target.checked) set.add(date);
-      else set.delete(date);
-      s.checkedDates = set;
-    });
+    if (target instanceof HTMLInputElement && target.dataset.keyCheckbox) {
+      const key = target.dataset.keyCheckbox;
+      store.update((s) => {
+        const set = new Set(s.checkedKeys);
+        if (target.checked) set.add(key);
+        else set.delete(key);
+        s.checkedKeys = set;
+      });
+      return;
+    }
+    if (target instanceof HTMLInputElement && target.dataset.hoursKey) {
+      const key = target.dataset.hoursKey;
+      const raw = Number(target.value);
+      if (!Number.isFinite(raw) || raw <= 0 || raw > 24) {
+        // Invalid input: re-render restores the last good value.
+        store.update(() => {});
+        return;
+      }
+      store.update((s) => {
+        s.entryHours = { ...s.entryHours, [key]: raw };
+      });
+      recomputePlan();
+    }
   });
 
   qs('import-btn').addEventListener('click', () => {

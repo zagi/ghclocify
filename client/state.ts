@@ -45,6 +45,7 @@ export type Prefs = {
   timezone: string;
   billable: boolean;
   includeWeekends: boolean;
+  splitEvenly: boolean;
 };
 
 function detectTimezone(): string {
@@ -74,6 +75,7 @@ export function defaultPrefs(): Prefs {
     timezone: detectTimezone(),
     billable: false,
     includeWeekends: false,
+    splitEvenly: true,
   };
 }
 
@@ -208,7 +210,14 @@ export type State = {
   existingEntriesError: string | null;
 
   plan: ImportPlan | null;
-  checkedDates: Set<string>;
+  /** `ProposedEntry.key`s selected for import. */
+  checkedKeys: Set<string>;
+  /**
+   * Manual hours per entry key — used only while `prefs.splitEvenly` is
+   * false. Keys that no longer exist in the plan are dropped on recompute;
+   * an entry with no override keeps its even share. Cleared with the scan.
+   */
+  entryHours: Record<string, number>;
 
   importing: {
     status: 'idle' | 'running' | 'done';
@@ -261,7 +270,8 @@ export function createInitialState(): State {
     existingEntriesFingerprint: null,
     existingEntriesError: null,
     plan: null,
-    checkedDates: new Set(),
+    checkedKeys: new Set(),
+    entryHours: {},
     importing: { status: 'idle', results: [], total: 0, completed: 0, stopRequested: false },
   };
 }
