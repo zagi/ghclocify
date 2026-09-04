@@ -618,8 +618,13 @@ tbody tr.is-duplicate td:not(:first-child) {
   color: var(--color-danger);
 }
 
-.hours-input {
+/* Specificity note: `input[type='number']` above (an attribute selector,
+   specificity 0,1,1) beats a bare `.hours-input` class (0,1,0), which left
+   this input styled by the generic `width: 100%` rule instead. Qualifying
+   with `td.hours-cell` raises this rule's specificity past that one. */
+td.hours-cell input.hours-input {
   width: 5.5rem;
+  min-width: 5.5rem;
   padding: 0.25rem 0.4rem;
   font-size: 0.9rem;
 }
@@ -627,6 +632,7 @@ tbody tr.is-duplicate td:not(:first-child) {
 td.hours-cell {
   white-space: nowrap;
   text-align: right;
+  min-width: 6.5rem;
 }
 
 /* Footer */

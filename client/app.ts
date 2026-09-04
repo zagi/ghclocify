@@ -52,10 +52,12 @@ function chunksOf<T>(items: T[], size: number): T[][] {
 const REPO_CHUNK = 8;
 /** Matches the server's `MAX_SEARCH_WINDOW_DAYS` (src/routes/scan.ts). */
 const SEARCH_WINDOW_DAYS = 31;
-/** Matches the server's `MAX_ENTRIES` (src/routes/apply.ts). Batches are
- *  packed by whole days (`batchByDay`): the server's pre-write duplicate
- *  check is day-level, so a day split across two batches would have its
- *  second half skipped as "already exists". */
+/** Matches the server's `MAX_ENTRIES` (src/routes/apply.ts) and
+ *  `MAX_ENTRIES_PER_DAY` (client/render.ts). Batches are packed by whole
+ *  days (`batchByDay`): the server's pre-write duplicate check is
+ *  day-level, so a day split across two batches would have its second half
+ *  skipped as "already exists" — which is also why a single day can never
+ *  hold more than this many entries in one import. */
 const APPLY_CHUNK = 10;
 
 function addDaysToKey(key: string, delta: number): string {
@@ -536,6 +538,12 @@ async function runImport(): Promise<void> {
   // day of entry.start); render.ts already disables the button in this
   // state, this is the belt to that brace.
   if (overflowingDates(checked, s0.prefs.timezone).length > 0) return;
+  // Same belt for the per-day entry cap: batchByDay never splits a day
+  // across batches, so a day with more than APPLY_CHUNK checked entries can
+  // never be imported. render.ts already disables the button in this state.
+  const perDayCounts = new Map<string, number>();
+  for (const e of checked) perDayCounts.set(e.date, (perDayCounts.get(e.date) ?? 0) + 1);
+  if ([...perDayCounts.values()].some((count) => count > APPLY_CHUNK)) return;
 
   store.update((s) => {
     s.importing = {
@@ -1036,8 +1044,12 @@ function wirePreviewStep(): void {
         store.update(() => {});
         return;
       }
+      // Round to what's actually displayed (2 decimal places, same as the
+      // input's toFixed(2) rendering) so the totals shown always agree with
+      // what's stored.
+      const value = Math.round(raw * 100) / 100;
       store.update((s) => {
-        s.entryHours = { ...s.entryHours, [key]: raw };
+        s.entryHours = { ...s.entryHours, [key]: value };
       });
       recomputePlan();
     }

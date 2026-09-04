@@ -130,6 +130,11 @@ before you rely on a later full scan to fill in the rest. The same rule
 means a day imported with one issue's entry cannot later gain a second
 issue's entry by re-scanning; add it in Clockify by hand.
 
+**A single day can hold at most 10 entries in one import.** The apply
+route rejects a batch of more than 10 entries, and a day's entries are
+never split across batches — so if a day's selected entries exceed that,
+uncheck some rows on that day before importing.
+
 ## Local development
 
 Requires Node ≥ 22.

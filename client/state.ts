@@ -85,10 +85,18 @@ export function loadPrefs(): Prefs {
     const raw = localStorage.getItem(PREFS_KEY);
     if (!raw) return base;
     const parsed = JSON.parse(raw) as Partial<Prefs>;
+    const hoursPerDay =
+      typeof parsed.hoursPerDay === 'number' &&
+      Number.isFinite(parsed.hoursPerDay) &&
+      parsed.hoursPerDay > 0 &&
+      parsed.hoursPerDay <= 24
+        ? parsed.hoursPerDay
+        : base.hoursPerDay;
     return {
       ...base,
       ...parsed,
       sources: { ...base.sources, ...parsed.sources },
+      hoursPerDay,
     };
   } catch {
     return base;

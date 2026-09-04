@@ -16,6 +16,15 @@ import { overflowingDates } from '../src/plan';
 import type { PlannedEntry } from '../src/types';
 import type { State } from './state';
 
+/** Matches `APPLY_CHUNK` in client/app.ts and `MAX_ENTRIES` in
+ *  src/routes/apply.ts — the server rejects a batch of more than this many
+ *  entries, and the client packs whole days per batch (`batchByDay`), so a
+ *  single day selecting more than this many entries can never be imported.
+ *  Not imported from app.ts (render.ts stays pure state -> DOM with no
+ *  dependency on the orchestration module) or from apply.ts (a server route
+ *  module); duplicated here deliberately, same as app.ts's own comment. */
+const MAX_ENTRIES_PER_DAY = 10;
+
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
   if (!found) throw new Error(`missing element #${id}`);
@@ -380,11 +389,74 @@ function hoursOf(entry: PlannedEntry): number {
   return (Date.parse(entry.end) - Date.parse(entry.start)) / 3_600_000;
 }
 
+type FocusCapture = {
+  attr: 'hoursKey' | 'keyCheckbox';
+  key: string;
+  selectionStart: number | null;
+  selectionEnd: number | null;
+} | null;
+
+/** The whole table is torn down and rebuilt on every render (`rowsEl.innerHTML
+ *  = ''` below); without this, focus falls to `<body>` on every committed
+ *  hours edit — breaking Tab, Enter, and spinner stepping between rows. Call
+ *  before the rebuild, then `restoreFocus` after. */
+function captureFocus(rowsEl: HTMLElement): FocusCapture {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLInputElement) || !rowsEl.contains(active)) return null;
+
+  if (active.dataset.hoursKey !== undefined) {
+    let selectionStart: number | null;
+    let selectionEnd: number | null;
+    try {
+      // `type=number` inputs return null (Chrome) or throw (Firefox) for
+      // selection properties — either way, guarded here rather than assumed.
+      selectionStart = active.selectionStart;
+      selectionEnd = active.selectionEnd;
+    } catch {
+      selectionStart = null;
+      selectionEnd = null;
+    }
+    return { attr: 'hoursKey', key: active.dataset.hoursKey, selectionStart, selectionEnd };
+  }
+  if (active.dataset.keyCheckbox !== undefined) {
+    return {
+      attr: 'keyCheckbox',
+      key: active.dataset.keyCheckbox,
+      selectionStart: null,
+      selectionEnd: null,
+    };
+  }
+  return null;
+}
+
+function restoreFocus(rowsEl: HTMLElement, capture: FocusCapture): void {
+  if (!capture) return;
+  const selector =
+    capture.attr === 'hoursKey'
+      ? `input[data-hours-key="${CSS.escape(capture.key)}"]`
+      : `input[data-key-checkbox="${CSS.escape(capture.key)}"]`;
+  const next = rowsEl.querySelector<HTMLInputElement>(selector);
+  if (!next) return;
+  next.focus();
+  if (
+    capture.attr === 'hoursKey' &&
+    typeof capture.selectionStart === 'number' &&
+    typeof capture.selectionEnd === 'number'
+  ) {
+    try {
+      next.setSelectionRange(capture.selectionStart, capture.selectionEnd);
+    } catch {
+      // setSelectionRange is unsupported on type=number in some browsers.
+    }
+  }
+}
+
 export function renderPreviewTable(state: State): void {
   const wrap = el('preview-table-wrap');
   const totals = el('preview-totals');
   const rowsEl = el('preview-rows');
   const selectAll = el<HTMLInputElement>('preview-select-all');
+  const focusCapture = captureFocus(rowsEl);
 
   const plan = state.plan;
 
@@ -397,7 +469,14 @@ export function renderPreviewTable(state: State): void {
     return;
   }
 
-  (el('split-evenly') as HTMLInputElement).checked = state.prefs.splitEvenly;
+  // Inputs stay editable during an import while runImport writes from a
+  // snapshot it took when the import started — editing them mid-import
+  // would have no effect and could confuse the totals shown.
+  const importingNow = state.importing.status === 'running';
+
+  const splitEvenlyInput = el('split-evenly') as HTMLInputElement;
+  splitEvenlyInput.checked = state.prefs.splitEvenly;
+  splitEvenlyInput.disabled = importingNow;
 
   wrap.hidden = false;
   rowsEl.innerHTML = '';
@@ -428,6 +507,7 @@ export function renderPreviewTable(state: State): void {
     checkbox.type = 'checkbox';
     checkbox.dataset.keyCheckbox = entry.key;
     checkbox.checked = state.checkedKeys.has(entry.key);
+    checkbox.disabled = importingNow;
     checkbox.setAttribute('aria-label', `Include ${entry.date} ${groupLabel(entry.group)}`);
     selectTd.appendChild(checkbox);
     tr.appendChild(selectTd);
@@ -469,6 +549,7 @@ export function renderPreviewTable(state: State): void {
       input.step = '0.25';
       input.value = hoursOf(entry).toFixed(2);
       input.dataset.hoursKey = entry.key;
+      input.disabled = importingNow;
       input.setAttribute('aria-label', `Hours for ${entry.date} ${groupLabel(entry.group)}`);
       hoursTd.appendChild(input);
     }
@@ -487,13 +568,31 @@ export function renderPreviewTable(state: State): void {
     rowsEl.appendChild(tr);
   }
 
+  restoreFocus(rowsEl, focusCapture);
+
   const selected = plan.entries.filter((e) => state.checkedKeys.has(e.key));
   const selectedCount = selected.length;
   const selectedHours = selected.reduce((sum, e) => sum + hoursOf(e), 0);
   const overflow = overflowingDates(selected, state.prefs.timezone);
+
+  const perDayCounts = new Map<string, number>();
+  for (const e of selected) {
+    perDayCounts.set(e.date, (perDayCounts.get(e.date) ?? 0) + 1);
+  }
+  const overCapDates = [...perDayCounts.entries()]
+    .filter(([, count]) => count > MAX_ENTRIES_PER_DAY)
+    .map(([date]) => date)
+    .sort();
+  const dayCapExceeded = overCapDates.length > 0;
+
   if (overflow.length > 0) {
     totals.classList.add('is-error');
     totals.textContent = `Entries on ${overflow.join(', ')} run past midnight — reduce their hours before importing.`;
+  } else if (dayCapExceeded) {
+    const firstDate = overCapDates[0] as string;
+    const count = perDayCounts.get(firstDate) as number;
+    totals.classList.add('is-error');
+    totals.textContent = `${firstDate} has ${count} selected entries; at most ${MAX_ENTRIES_PER_DAY} can be imported at once — uncheck some rows.`;
   } else {
     totals.classList.remove('is-error');
     totals.textContent = `${selectedCount} of ${plan.entries.length} entries selected — ${selectedHours.toFixed(2)} hours`;
@@ -501,16 +600,16 @@ export function renderPreviewTable(state: State): void {
 
   selectAll.checked = selectedCount > 0 && selectedCount === plan.entries.length;
   selectAll.indeterminate = selectedCount > 0 && selectedCount < plan.entries.length;
+  selectAll.disabled = importingNow;
 
   // While an import is running, the same button doubles as Stop — it must
   // stay enabled so the user can click it to stop after the in-flight batch.
-  const importing = state.importing.status === 'running';
   const importBtn = el('import-btn') as HTMLButtonElement;
-  if (importing) {
+  if (importingNow) {
     importBtn.disabled = false;
     importBtn.textContent = `Stop (${state.importing.completed} of ${state.importing.total} imported)`;
   } else {
-    importBtn.disabled = selectedCount === 0 || overflow.length > 0;
+    importBtn.disabled = selectedCount === 0 || overflow.length > 0 || dayCapExceeded;
     importBtn.textContent = 'Import entries';
   }
 
