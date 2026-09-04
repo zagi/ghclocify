@@ -543,6 +543,8 @@ async function runImport(): Promise<void> {
     if (batchIndex > 0) await sleep(2000);
     const proposed: ProposedEntry[] = batch.map((e) => ({
       date: e.date,
+      key: e.key,
+      group: e.group,
       start: e.start,
       end: e.end,
       description: e.description,
@@ -569,7 +571,7 @@ async function runImport(): Promise<void> {
       store.update((s) => {
         s.importing.results = [
           ...s.importing.results,
-          ...batch.map((e) => ({ date: e.date, ok: false, error: message })),
+          ...batch.map((e) => ({ date: e.date, key: e.key, ok: false, error: message })),
         ];
         s.importing.completed += batch.length;
       });

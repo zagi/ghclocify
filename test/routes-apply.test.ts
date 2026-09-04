@@ -100,6 +100,8 @@ function createHandler(id: string) {
 
 const ENTRY_1 = {
   date: '2026-08-01',
+  key: '2026-08-01|',
+  group: '',
   start: '2026-08-01T09:00:00Z',
   end: '2026-08-01T17:00:00Z',
   description: 'Did some work',
@@ -111,6 +113,8 @@ const ENTRY_1 = {
 
 const ENTRY_2 = {
   date: '2026-08-02',
+  key: '2026-08-02|',
+  group: '',
   start: '2026-08-02T09:00:00Z',
   end: '2026-08-02T17:00:00Z',
   description: 'Did more work',
@@ -156,8 +160,8 @@ describe('apply route', () => {
     expect(res.status).toBe(200);
     const body = await res.json<{ results: ApplyResult[] }>();
     expect(body.results).toEqual([
-      { date: '2026-08-01', ok: true, entryId: 'new-1' },
-      { date: '2026-08-02', ok: true, entryId: 'new-2' },
+      { date: '2026-08-01', key: '2026-08-01|', ok: true, entryId: 'new-1' },
+      { date: '2026-08-02', key: '2026-08-02|', ok: true, entryId: 'new-2' },
     ]);
     expect(createCount).toBe(2);
   });
@@ -175,7 +179,7 @@ describe('apply route', () => {
     expect(res.status).toBe(200);
     const body = await res.json<{ results: ApplyResult[] }>();
     expect(body.results).toEqual([
-      { date: '2026-08-01', ok: true, skipped: true, error: 'Already exists' },
+      { date: '2026-08-01', key: '2026-08-01|', ok: true, skipped: true, error: 'Already exists' },
     ]);
     // Airtight: no call to fetch ever had method POST.
     const postCalls = fetchMock.mock.calls.filter(
@@ -184,16 +188,16 @@ describe('apply route', () => {
     expect(postCalls).toHaveLength(0);
   });
 
-  it('3. entries.length = 6 -> 400 invalid_request, no writes', async () => {
+  it('3. entries.length = 11 -> 400 invalid_request, no writes', async () => {
     const fetchMock = neverCalledFetch();
     vi.stubGlobal('fetch', fetchMock);
 
     const res = await post('/api/apply', {
       ...VALID_BODY,
-      entries: Array.from({ length: 6 }, (_, i) => ({
-        ...ENTRY_1,
-        date: `2026-08-${String(i + 1).padStart(2, '0')}`,
-      })),
+      entries: Array.from({ length: 11 }, (_, i) => {
+        const date = `2026-08-${String(i + 1).padStart(2, '0')}`;
+        return { ...ENTRY_1, date, key: `${date}|` };
+      }),
     });
 
     expect(res.status).toBe(400);
@@ -224,7 +228,12 @@ describe('apply route', () => {
     const body = await res.json<{ results: ApplyResult[] }>();
     expect(body.results).toHaveLength(2);
     expect(body.results[0]).toEqual(expect.objectContaining({ date: '2026-08-01', ok: false }));
-    expect(body.results[1]).toEqual({ date: '2026-08-02', ok: true, entryId: 'new-2' });
+    expect(body.results[1]).toEqual({
+      date: '2026-08-02',
+      key: '2026-08-02|',
+      ok: true,
+      entryId: 'new-2',
+    });
     expect(createCalls).toBe(2);
   });
 
@@ -352,6 +361,7 @@ describe('apply route', () => {
         {
           ...ENTRY_1,
           date: '2026-01-01',
+          key: '2026-01-01|',
           start: '2026-08-03T09:00:00Z',
           end: '2026-08-03T17:00:00Z',
         },
@@ -427,7 +437,7 @@ describe('apply route', () => {
     expect(res.status).toBe(200);
     const body = await res.json<{ results: ApplyResult[] }>();
     expect(body.results).toEqual([
-      { date: '2026-08-01', ok: true, skipped: true, error: 'Already exists' },
+      { date: '2026-08-01', key: '2026-08-01|', ok: true, skipped: true, error: 'Already exists' },
     ]);
     expect(listCalls).toBe(2);
   });
@@ -489,6 +499,11 @@ describe('apply route', () => {
     expect(body.results).toHaveLength(2);
     expect(body.results[0]).toEqual(expect.objectContaining({ date: '2026-08-01', ok: false }));
     expect(body.results[0]?.error).toContain('could not confirm whether it landed');
-    expect(body.results[1]).toEqual({ date: '2026-08-02', ok: true, entryId: 'new-2' });
+    expect(body.results[1]).toEqual({
+      date: '2026-08-02',
+      key: '2026-08-02|',
+      ok: true,
+      entryId: 'new-2',
+    });
   });
 });

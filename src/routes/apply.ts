@@ -148,9 +148,21 @@ function readEntry(value: unknown, timezone: string): ProposedEntry {
   if (!Array.isArray(e.repos) || e.repos.some((r) => typeof r !== 'string')) {
     throw new AppError(400, 'invalid_request', 'entry.repos must be an array of strings');
   }
+  if (typeof e.group !== 'string' || e.group.length > 300) {
+    throw new AppError(
+      400,
+      'invalid_request',
+      'entry.group must be a string of at most 300 characters',
+    );
+  }
+  if (typeof e.key !== 'string' || e.key !== `${e.date}|${e.group}`) {
+    throw new AppError(400, 'invalid_request', 'entry.key must equal `${date}|${group}`');
+  }
 
   return {
     date: e.date,
+    key: e.key,
+    group: e.group,
     start: e.start,
     end: e.end,
     description: e.description,
@@ -264,7 +276,13 @@ applyRoutes.post('/', async (c) => {
   // converts that budget into 429s.
   for (const entry of entries) {
     if (findDuplicate(entry, existing, timezone)) {
-      results.push({ date: entry.date, ok: true, skipped: true, error: 'Already exists' });
+      results.push({
+        date: entry.date,
+        key: entry.key,
+        ok: true,
+        skipped: true,
+        error: 'Already exists',
+      });
       continue;
     }
 
@@ -284,7 +302,7 @@ applyRoutes.post('/', async (c) => {
         description: entry.description,
         projectId: entry.projectId,
       });
-      results.push({ date: entry.date, ok: true, entryId: created.id });
+      results.push({ date: entry.date, key: entry.key, ok: true, entryId: created.id });
     } catch (err) {
       // Rule 4: one entry's failure never aborts the batch.
       if (isAmbiguousFailure(err)) {
@@ -307,24 +325,37 @@ applyRoutes.post('/', async (c) => {
           // every POST 429s, triggering a recheck that also 429s.
           results.push({
             date: entry.date,
+            key: entry.key,
             ok: false,
             error: `${(err as AppError).message} (could not confirm whether it landed)`,
           });
           continue;
         }
         if (recheck.landed) {
-          results.push({ date: entry.date, ok: true, skipped: true, error: 'Already exists' });
+          results.push({
+            date: entry.date,
+            key: entry.key,
+            ok: true,
+            skipped: true,
+            error: 'Already exists',
+          });
         } else {
-          results.push({ date: entry.date, ok: false, error: (err as AppError).message });
+          results.push({
+            date: entry.date,
+            key: entry.key,
+            ok: false,
+            error: (err as AppError).message,
+          });
         }
       } else if (err instanceof AppError) {
-        results.push({ date: entry.date, ok: false, error: err.message });
+        results.push({ date: entry.date, key: entry.key, ok: false, error: err.message });
       } else {
         // Still rule 4: an unexpected (non-AppError) exception must not
         // abort the batch either — record it and let the caller learn
         // which entries succeeded, same as every other failure shape.
         results.push({
           date: entry.date,
+          key: entry.key,
           ok: false,
           error: err instanceof Error ? err.message : 'Unexpected error',
         });

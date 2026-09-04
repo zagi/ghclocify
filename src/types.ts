@@ -31,6 +31,18 @@ export type ImportSettings = {
 export type ProposedEntry = {
   /** Local calendar day, `YYYY-MM-DD`. */
   date: string;
+  /**
+   * Stable identity within a plan: `${date}|${group}` (see `entryKey` in
+   * aggregate.ts). Selection and manual hour overrides are keyed on it, and
+   * the apply route echoes it back in every `ApplyResult`.
+   */
+  key: string;
+  /**
+   * Issue group: `''` for activities whose titles reference no issue, else
+   * `owner/repo#12` — or `owner/repo#12#34` when one title references
+   * several issues (that activity is then its own group).
+   */
+  group: string;
   /** UTC ISO-8601 with `Z`, second precision. */
   start: string;
   end: string;
@@ -66,6 +78,8 @@ export type ImportPlan = {
 
 export type ApplyResult = {
   date: string;
+  /** The `ProposedEntry.key` this result is for. */
+  key: string;
   ok: boolean;
   entryId?: string;
   /** Set when `ok` is false, or when the write was skipped as a duplicate. */

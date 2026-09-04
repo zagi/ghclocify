@@ -28,6 +28,13 @@ const ISSUE_REF = /#(\d+)/g;
 /** Anchored at the title start; case-insensitive; original casing captured. */
 const TYPE_PREFIX = /^\((fix|feat)\)/i;
 
+/** Every `#123` reference in `title`, deduped and ascending. */
+export function issueNumbersIn(title: string): number[] {
+  const numbers = new Set<number>();
+  for (const match of title.matchAll(ISSUE_REF)) numbers.add(Number(match[1]));
+  return [...numbers].sort((a, b) => a - b);
+}
+
 /**
  * `<ALIAS> [ISSUE #a #b] [(fix) (feat)] title1, title2   |   <ALIAS2> ...`
  *
@@ -62,9 +69,7 @@ export function describeDay(activities: Activity[], aliases: Record<string, stri
     const titles: string[] = [];
 
     for (const item of items) {
-      for (const match of item.title.matchAll(ISSUE_REF)) {
-        issueNumbers.add(Number(match[1]));
-      }
+      for (const n of issueNumbersIn(item.title)) issueNumbers.add(n);
 
       const typeMatch = TYPE_PREFIX.exec(item.title);
       if (typeMatch?.[1]) types.add(typeMatch[1]);

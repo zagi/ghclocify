@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aggregate } from '../src/aggregate';
+import { aggregate, entryKey, groupLabel, issueGroupOf } from '../src/aggregate';
 import type { Activity, ImportSettings } from '../src/types';
 
 let nextId = 0;
@@ -151,5 +151,125 @@ describe('aggregate', () => {
     const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
     expect(entries).toHaveLength(1);
     expect(entries[0]?.activityCount).toBe(4);
+  });
+
+  it('10. splits a day into one entry per referenced issue, laid out back-to-back with equal hours', () => {
+    const activities: Activity[] = [
+      act({ timestamp: '2026-08-03T09:00:00Z', title: 'start on #123' }),
+      act({ timestamp: '2026-08-03T11:00:00Z', title: 'work on #124' }),
+      act({ timestamp: '2026-08-03T15:00:00Z', title: 'finish #123' }),
+    ];
+    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
+    expect(entries).toHaveLength(2);
+    expect(entries.map((e) => e.group)).toEqual(['acme/demo-project#123', 'acme/demo-project#124']);
+    expect(entries.map((e) => e.key)).toEqual([
+      '2026-08-03|acme/demo-project#123',
+      '2026-08-03|acme/demo-project#124',
+    ]);
+    expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
+    expect(entries[0]?.end).toBe('2026-08-03T13:00:00Z');
+    expect(entries[1]?.start).toBe('2026-08-03T13:00:00Z');
+    expect(entries[1]?.end).toBe('2026-08-03T17:00:00Z');
+    expect(entries[0]?.activityCount).toBe(2);
+    expect(entries[1]?.activityCount).toBe(1);
+    expect(entries[0]?.description).toContain('start on #123');
+    expect(entries[0]?.description).toContain('finish #123');
+    expect(entries[0]?.description).not.toContain('work on #124');
+  });
+
+  it('11. activities referencing no issue form a single "other" group on the day, keyed with an empty group', () => {
+    const activities: Activity[] = [
+      act({ timestamp: '2026-08-03T09:00:00Z', title: 'chore: tidy' }),
+      act({ timestamp: '2026-08-03T10:00:00Z', title: 'fix #7' }),
+      act({ timestamp: '2026-08-03T12:00:00Z', title: 'chore: more tidy' }),
+    ];
+    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
+    expect(entries.map((e) => e.group)).toEqual(['', 'acme/demo-project#7']);
+    expect(entries[0]?.key).toBe('2026-08-03|');
+    expect(entries[0]?.activityCount).toBe(2);
+    expect(entries[0]?.date).toBe('2026-08-03');
+    expect(entries[1]?.date).toBe('2026-08-03');
+  });
+
+  it("12. orders a day's groups by their earliest activity, not by issue number", () => {
+    const activities: Activity[] = [
+      act({ timestamp: '2026-08-03T14:00:00Z', title: 'late #5' }),
+      act({ timestamp: '2026-08-03T09:00:00Z', title: 'early #900' }),
+      act({ timestamp: '2026-08-03T08:00:00Z', title: 'earliest #5' }),
+    ];
+    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
+    expect(entries.map((e) => e.group)).toEqual(['acme/demo-project#5', 'acme/demo-project#900']);
+  });
+
+  it('13. shares are whole seconds summing exactly to hoursPerDay, remainder to the earliest entries', () => {
+    const activities: Activity[] = Array.from({ length: 7 }, (_, i) =>
+      act({ timestamp: `2026-08-03T0${i + 1}:00:00Z`, title: `task #${i + 1}` }),
+    );
+    const { entries } = aggregate(
+      activities,
+      baseSettings({ timezone: 'UTC', hoursPerDay: 8, startTime: '09:00' }),
+    );
+    const seconds = entries.map((e) => (Date.parse(e.end) - Date.parse(e.start)) / 1000);
+    expect(seconds.every(Number.isInteger)).toBe(true);
+    expect(seconds.reduce((a, b) => a + b, 0)).toBe(28_800);
+    expect(seconds).toEqual([4115, 4115, 4114, 4114, 4114, 4114, 4114]);
+    expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
+    expect(entries[6]?.end).toBe('2026-08-03T17:00:00Z');
+  });
+
+  it("14. a manual override replaces only that entry's hours; others keep the even share and layout stays sequential", () => {
+    const activities: Activity[] = [
+      act({ timestamp: '2026-08-03T09:00:00Z', title: 'a #1' }),
+      act({ timestamp: '2026-08-03T10:00:00Z', title: 'b #2' }),
+    ];
+    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }), {
+      '2026-08-03|acme/demo-project#1': 1.5,
+    });
+    expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
+    expect(entries[0]?.end).toBe('2026-08-03T10:30:00Z');
+    expect(entries[1]?.start).toBe('2026-08-03T10:30:00Z');
+    expect(entries[1]?.end).toBe('2026-08-03T14:30:00Z');
+  });
+
+  it('15. an override that is not a finite number in (0, 24] is ignored, not clamped', () => {
+    const activities: Activity[] = [act({ timestamp: '2026-08-03T09:00:00Z', title: 'a #1' })];
+    for (const bad of [0, -1, 25, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }), {
+        '2026-08-03|acme/demo-project#1': bad,
+      });
+      expect(entries[0]?.end).toBe('2026-08-03T17:00:00Z');
+    }
+  });
+
+  it('16. the same issue number in two repos is two groups; a title referencing two issues is its own group', () => {
+    const activities: Activity[] = [
+      act({ repo: 'acme/one', timestamp: '2026-08-03T09:00:00Z', title: 'fix #1' }),
+      act({ repo: 'acme/two', timestamp: '2026-08-03T10:00:00Z', title: 'fix #1' }),
+      act({ repo: 'acme/one', timestamp: '2026-08-03T11:00:00Z', title: 'refs #2 #1' }),
+    ];
+    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
+    expect(entries.map((e) => e.group)).toEqual(['acme/one#1', 'acme/two#1', 'acme/one#1#2']);
+  });
+
+  it('17. issueGroupOf / groupLabel / entryKey helpers', () => {
+    expect(issueGroupOf(act({ repo: 'acme/x', title: 'no ref' }))).toBe('');
+    expect(issueGroupOf(act({ repo: 'acme/x', title: 'see #34 and #12' }))).toBe('acme/x#12#34');
+    expect(groupLabel('')).toBe('Other');
+    expect(groupLabel('acme/x#12')).toBe('#12');
+    expect(groupLabel('acme/x#12#34')).toBe('#12 #34');
+    expect(entryKey('2026-08-03', 'acme/x#12')).toBe('2026-08-03|acme/x#12');
+    expect(entryKey('2026-08-03', '')).toBe('2026-08-03|');
+  });
+
+  it('18. with no issue references at all the output is one entry per day, exactly as before', () => {
+    const activities: Activity[] = [
+      act({ timestamp: '2026-08-03T09:00:00Z', title: 'first commit' }),
+      act({ timestamp: '2026-08-03T15:00:00Z', title: 'second commit' }),
+    ];
+    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.group).toBe('');
+    expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
+    expect(entries[0]?.end).toBe('2026-08-03T17:00:00Z');
   });
 });

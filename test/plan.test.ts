@@ -5,6 +5,8 @@ import type { ExistingEntry, ProposedEntry } from '../src/types';
 function proposed(overrides: Partial<ProposedEntry> = {}): ProposedEntry {
   return {
     date: '2026-08-03',
+    key: '2026-08-03|acme/demo#1',
+    group: 'acme/demo#1',
     start: '2026-08-03T09:00:00Z',
     end: '2026-08-03T17:00:00Z',
     description: 'did stuff',

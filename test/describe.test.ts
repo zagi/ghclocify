@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeDay, repoAlias, sanitizeDescription } from '../src/describe';
+import { describeDay, issueNumbersIn, repoAlias, sanitizeDescription } from '../src/describe';
 import type { Activity } from '../src/types';
 
 let nextId = 0;
@@ -169,5 +169,16 @@ describe('sanitizeDescription', () => {
 
   it('replaces control characters with spaces', () => {
     expect(sanitizeDescription('a\x01b\x1fc\x7fd')).toBe('a b c d');
+  });
+});
+
+describe('issueNumbersIn', () => {
+  it('returns every #N reference deduped and ascending', () => {
+    expect(issueNumbersIn('fix #185 and #9, also #185 again')).toEqual([9, 185]);
+  });
+
+  it('returns an empty array when nothing is referenced', () => {
+    expect(issueNumbersIn('bump deps')).toEqual([]);
+    expect(issueNumbersIn('')).toEqual([]);
   });
 });

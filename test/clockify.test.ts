@@ -139,6 +139,8 @@ describe('clockify client', () => {
 
     const proposed: ProposedEntry = {
       date: '2026-08-01',
+      key: '2026-08-01|',
+      group: '',
       start: '2026-08-01T09:00:00Z',
       end: '2026-08-01T17:00:00Z',
       description: 'Did some work',
@@ -274,6 +276,8 @@ describe('clockify client', () => {
 
     const proposed: ProposedEntry = {
       date: '2026-08-01',
+      key: '2026-08-01|',
+      group: '',
       start: '2026-08-01T09:00:00Z',
       end: '2026-08-01T17:00:00Z',
       description: 'Did some work',
