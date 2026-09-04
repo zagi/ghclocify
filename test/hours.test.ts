@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { batchByDay, hoursToSeconds, splitSeconds } from '../src/hours';
+import {
+  estimateImport,
+  formatDuration,
+  freeTierHours,
+  hoursToSeconds,
+  splitSeconds,
+} from '../src/hours';
 
 describe('splitSeconds', () => {
   it('1. divides evenly when it can: 8h into 3 is 9600s each', () => {
@@ -37,50 +43,27 @@ describe('hoursToSeconds', () => {
   });
 });
 
-describe('batchByDay', () => {
-  const item = (date: string, key: string) => ({ date, key });
-
-  it('6. packs whole days into batches of at most max', () => {
-    const items = [
-      item('2026-08-03', 'a'),
-      item('2026-08-03', 'b'),
-      item('2026-08-04', 'c'),
-      item('2026-08-04', 'd'),
-      item('2026-08-05', 'e'),
-    ];
-    // Days 04 (2) and 05 (1) fit together under max 3; day 03 + day 04 would be 4.
-    expect(batchByDay(items, 3)).toEqual([
-      [item('2026-08-03', 'a'), item('2026-08-03', 'b')],
-      [item('2026-08-04', 'c'), item('2026-08-04', 'd'), item('2026-08-05', 'e')],
-    ]);
+describe('estimateImport', () => {
+  it('10. counts batches and seconds: 0.5 s per entry plus 2 s between batches', () => {
+    expect(estimateImport(0, 10)).toEqual({ batches: 0, seconds: 0 });
+    expect(estimateImport(3, 10)).toEqual({ batches: 1, seconds: 1.5 });
+    expect(estimateImport(10, 10)).toEqual({ batches: 1, seconds: 5 });
+    expect(estimateImport(40, 10)).toEqual({ batches: 4, seconds: 26 });
   });
 
-  it('7. fills a batch up to exactly max when days fit', () => {
-    const items = [
-      item('2026-08-03', 'a'),
-      item('2026-08-04', 'b'),
-      item('2026-08-05', 'c'),
-      item('2026-08-06', 'd'),
-    ];
-    expect(batchByDay(items, 3).map((b) => b.length)).toEqual([3, 1]);
+  it('11. freeTierHours budgets 28 requests per hour for entries plus one pre-check per batch', () => {
+    expect(freeTierHours(3, 10)).toBe(1); // 3 + 1 = 4 requests
+    expect(freeTierHours(27, 10)).toBe(2); // 27 + 3 = 30 > 28
+    expect(freeTierHours(40, 10)).toBe(2); // 40 + 4 = 44 -> 2 hours
+    expect(freeTierHours(0, 10)).toBe(0);
   });
 
-  it('8. a day larger than max is emitted alone, over the cap, never split', () => {
-    const items = [
-      item('2026-08-03', 'a'),
-      item('2026-08-04', 'b'),
-      item('2026-08-04', 'c'),
-      item('2026-08-04', 'd'),
-      item('2026-08-05', 'e'),
-    ];
-    expect(batchByDay(items, 2)).toEqual([
-      [item('2026-08-03', 'a')],
-      [item('2026-08-04', 'b'), item('2026-08-04', 'c'), item('2026-08-04', 'd')],
-      [item('2026-08-05', 'e')],
-    ]);
-  });
-
-  it('9. empty input yields no batches', () => {
-    expect(batchByDay([], 5)).toEqual([]);
+  it('12. formatDuration renders seconds, minutes and hours compactly', () => {
+    expect(formatDuration(0)).toBe('0 s');
+    expect(formatDuration(1.5)).toBe('2 s');
+    expect(formatDuration(26)).toBe('26 s');
+    expect(formatDuration(80)).toBe('1 min 20 s');
+    expect(formatDuration(600)).toBe('10 min');
+    expect(formatDuration(3720)).toBe('1 h 2 min');
   });
 });

@@ -618,7 +618,18 @@ tbody tr.is-duplicate td:not(:first-child) {
   color: var(--color-danger);
 }
 
-/* Specificity note: `input[type='number']` above (an attribute selector,
+.totals-warning {
+  color: var(--color-danger);
+  font-weight: 500;
+}
+
+tbody.is-manual .hours-input {
+  border: 1.5px solid var(--color-accent);
+  background: var(--color-surface-alt);
+  text-align: right;
+}
+
+/* Specificity note: `input[type='text']` above (an attribute selector,
    specificity 0,1,1) beats a bare `.hours-input` class (0,1,0), which left
    this input styled by the generic `width: 100%` rule instead. Qualifying
    with `td.hours-cell` raises this rule's specificity past that one. */

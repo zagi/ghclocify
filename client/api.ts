@@ -265,6 +265,7 @@ export async function apply(
     userId: string;
     timezone: string;
     entries: ProposedEntry[];
+    dayStarts: Record<string, string[]>;
   },
 ): Promise<{ results: ApplyResult[] }> {
   return request(

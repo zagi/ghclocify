@@ -116,7 +116,11 @@ workspace from the API and shows a prominent warning before you import;
 if it can't determine a workspace's plan at all (some legacy or
 edge-case responses omit the field), it assumes free and warns anyway,
 since that's the safer direction to be wrong in. If you're on a paid
-Clockify plan (50 requests/sec), this doesn't apply to you.
+Clockify plan (50 requests/sec), this doesn't apply to you. The preview
+also shows an estimated duration for the import and, for Free
+workspaces, roughly how many hours the import would need against that
+budget — the tool does not pace itself across hours, so a large import
+on a Free workspace should be done in stages instead.
 
 **A day imported from a partial (cancelled) scan can never be corrected by
 re-scanning.** Duplicate detection matches on (day, project): once a day has
@@ -129,11 +133,6 @@ entries should be checked (and corrected directly in Clockify, if needed)
 before you rely on a later full scan to fill in the rest. The same rule
 means a day imported with one issue's entry cannot later gain a second
 issue's entry by re-scanning; add it in Clockify by hand.
-
-**A single day can hold at most 10 entries in one import.** The apply
-route rejects a batch of more than 10 entries, and a day's entries are
-never split across batches — so if a day's selected entries exceed that,
-uncheck some rows on that day before importing.
 
 ## Local development
 

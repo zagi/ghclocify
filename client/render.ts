@@ -12,18 +12,13 @@
  * rule.
  */
 import { groupLabel } from '../src/aggregate';
+import { estimateImport, formatDuration, freeTierHours } from '../src/hours';
 import { overflowingDates } from '../src/plan';
 import type { PlannedEntry } from '../src/types';
 import type { State } from './state';
 
-/** Matches `APPLY_CHUNK` in client/app.ts and `MAX_ENTRIES` in
- *  src/routes/apply.ts — the server rejects a batch of more than this many
- *  entries, and the client packs whole days per batch (`batchByDay`), so a
- *  single day selecting more than this many entries can never be imported.
- *  Not imported from app.ts (render.ts stays pure state -> DOM with no
- *  dependency on the orchestration module) or from apply.ts (a server route
- *  module); duplicated here deliberately, same as app.ts's own comment. */
-const MAX_ENTRIES_PER_DAY = 10;
+/** Mirrors client/app.ts APPLY_CHUNK and src/routes/apply.ts MAX_ENTRIES. */
+const APPLY_CHUNK = 10;
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -454,6 +449,7 @@ function restoreFocus(rowsEl: HTMLElement, capture: FocusCapture): void {
 export function renderPreviewTable(state: State): void {
   const wrap = el('preview-table-wrap');
   const totals = el('preview-totals');
+  const freeWarning = el('preview-free-warning');
   const rowsEl = el('preview-rows');
   const selectAll = el<HTMLInputElement>('preview-select-all');
   const focusCapture = captureFocus(rowsEl);
@@ -463,6 +459,7 @@ export function renderPreviewTable(state: State): void {
   if (!plan) {
     wrap.hidden = true;
     totals.hidden = true;
+    freeWarning.hidden = true;
     rowsEl.innerHTML = '';
     (el('import-btn') as HTMLButtonElement).disabled = true;
     (el('import-btn') as HTMLButtonElement).textContent = 'Import entries';
@@ -483,6 +480,7 @@ export function renderPreviewTable(state: State): void {
 
   if (plan.entries.length === 0) {
     totals.hidden = true;
+    freeWarning.hidden = true;
     const tr = document.createElement('tr');
     const td = document.createElement('td');
     td.colSpan = 9;
@@ -496,6 +494,12 @@ export function renderPreviewTable(state: State): void {
   }
 
   totals.hidden = false;
+  rowsEl.classList.toggle('is-manual', !state.prefs.splitEvenly);
+
+  const hint = el('split-evenly-hint');
+  hint.textContent = state.prefs.splitEvenly
+    ? 'Each GitHub issue gets its own entry. Uncheck to set the hours of every entry by hand — "Hours per day" then only seeds the values.'
+    : 'Manual mode: type the hours for each entry in the Hours column (e.g. 1.5 or 1,5). Re-check to go back to an even split.';
 
   for (const entry of plan.entries) {
     const tr = document.createElement('tr');
@@ -542,11 +546,10 @@ export function renderPreviewTable(state: State): void {
       hoursTd.textContent = hoursOf(entry).toFixed(2);
     } else {
       const input = document.createElement('input');
-      input.type = 'number';
+      input.type = 'text';
+      input.inputMode = 'decimal';
       input.className = 'hours-input';
-      input.min = '0.25';
-      input.max = '24';
-      input.step = '0.25';
+      input.autocomplete = 'off';
       input.value = hoursOf(entry).toFixed(2);
       input.dataset.hoursKey = entry.key;
       input.disabled = importingNow;
@@ -575,27 +578,23 @@ export function renderPreviewTable(state: State): void {
   const selectedHours = selected.reduce((sum, e) => sum + hoursOf(e), 0);
   const overflow = overflowingDates(selected, state.prefs.timezone);
 
-  const perDayCounts = new Map<string, number>();
-  for (const e of selected) {
-    perDayCounts.set(e.date, (perDayCounts.get(e.date) ?? 0) + 1);
-  }
-  const overCapDates = [...perDayCounts.entries()]
-    .filter(([, count]) => count > MAX_ENTRIES_PER_DAY)
-    .map(([date]) => date)
-    .sort();
-  const dayCapExceeded = overCapDates.length > 0;
-
   if (overflow.length > 0) {
     totals.classList.add('is-error');
     totals.textContent = `Entries on ${overflow.join(', ')} run past midnight — reduce their hours before importing.`;
-  } else if (dayCapExceeded) {
-    const firstDate = overCapDates[0] as string;
-    const count = perDayCounts.get(firstDate) as number;
-    totals.classList.add('is-error');
-    totals.textContent = `${firstDate} has ${count} selected entries; at most ${MAX_ENTRIES_PER_DAY} can be imported at once — uncheck some rows.`;
   } else {
     totals.classList.remove('is-error');
-    totals.textContent = `${selectedCount} of ${plan.entries.length} entries selected — ${selectedHours.toFixed(2)} hours`;
+    const { seconds } = estimateImport(selectedCount, APPLY_CHUNK);
+    const prefix = state.prefs.splitEvenly ? '' : 'Manual hours — ';
+    totals.textContent = `${prefix}${selectedCount} of ${plan.entries.length} entries selected — ${selectedHours.toFixed(2)} hours · ~${formatDuration(seconds)}`;
+  }
+
+  const workspace = state.connect.workspaces.find((w) => w.id === state.prefs.workspaceId);
+  if (workspace?.freeTier && selectedCount > 0) {
+    const hours = freeTierHours(selectedCount, APPLY_CHUNK);
+    freeWarning.hidden = false;
+    freeWarning.textContent = `Free Clockify plan: 30 API requests per hour, workspace-wide. This import needs about ${hours} hour${hours === 1 ? '' : 's'} and will start failing with 429 after ~28 entries — uncheck rows or import in stages.`;
+  } else {
+    freeWarning.hidden = true;
   }
 
   selectAll.checked = selectedCount > 0 && selectedCount === plan.entries.length;
@@ -609,7 +608,7 @@ export function renderPreviewTable(state: State): void {
     importBtn.disabled = false;
     importBtn.textContent = `Stop (${state.importing.completed} of ${state.importing.total} imported)`;
   } else {
-    importBtn.disabled = selectedCount === 0 || overflow.length > 0 || dayCapExceeded;
+    importBtn.disabled = selectedCount === 0 || overflow.length > 0;
     importBtn.textContent = 'Import entries';
   }
 

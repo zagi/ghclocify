@@ -1,6 +1,6 @@
 /**
  * Pure helpers for dividing a day's hours across its entries and for
- * packing entries into apply batches.
+ * estimating the cost of an import.
  *
  * Client-safe: no runtime imports, bundled into both the Worker and the
  * browser client.
@@ -30,35 +30,38 @@ export function hoursToSeconds(hours: number): number {
   return Math.round(hours * 3600);
 }
 
-/**
- * Pack `items` into batches of at most `max`, never splitting one `date`
- * across two batches. The apply route's pre-write duplicate check is
- * day-level against entries fetched before each batch, so a day's second
- * half in a later batch would see its first half as "already exists".
- *
- * A single day holding more than `max` items is emitted on its own, over
- * the cap — the caller decides what to do with it (the server rejects it).
- */
-export function batchByDay<T extends { date: string }>(items: T[], max: number): T[][] {
-  const days = new Map<string, T[]>();
-  for (const item of items) {
-    let bucket = days.get(item.date);
-    if (!bucket) {
-      bucket = [];
-      days.set(item.date, bucket);
-    }
-    bucket.push(item);
-  }
+/** Rough wall-clock cost of one sequential Clockify POST from the Worker. */
+const SECONDS_PER_ENTRY = 0.5;
+/** Matches the client's inter-batch pause (client/app.ts). */
+const SECONDS_BETWEEN_BATCHES = 2;
+/** Clockify Free: 30 requests/hour workspace-wide; keep a margin. */
+const FREE_TIER_REQUESTS_PER_HOUR = 28;
 
-  const batches: T[][] = [];
-  let current: T[] = [];
-  for (const day of days.values()) {
-    if (current.length > 0 && current.length + day.length > max) {
-      batches.push(current);
-      current = [];
-    }
-    current.push(...day);
+export function estimateImport(
+  count: number,
+  batchSize: number,
+): { batches: number; seconds: number } {
+  if (count <= 0) return { batches: 0, seconds: 0 };
+  const batches = Math.ceil(count / batchSize);
+  return { batches, seconds: count * SECONDS_PER_ENTRY + (batches - 1) * SECONDS_BETWEEN_BATCHES };
+}
+
+/** Hours a Free workspace needs: one POST per entry plus one pre-check GET per batch. */
+export function freeTierHours(count: number, batchSize: number): number {
+  if (count <= 0) return 0;
+  const { batches } = estimateImport(count, batchSize);
+  return Math.ceil((count + batches) / FREE_TIER_REQUESTS_PER_HOUR);
+}
+
+export function formatDuration(seconds: number): string {
+  const total = Math.round(seconds);
+  if (total < 60) return `${total} s`;
+  if (total < 3600) {
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return s === 0 ? `${m} min` : `${m} min ${s} s`;
   }
-  if (current.length > 0) batches.push(current);
-  return batches;
+  const h = Math.floor(total / 3600);
+  const m = Math.round((total % 3600) / 60);
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }

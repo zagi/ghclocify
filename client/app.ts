@@ -33,7 +33,6 @@ import {
 import type { DatePreset, ScanSourceKey, State } from './state';
 import { renderAll } from './render';
 import { aggregate } from '../src/aggregate';
-import { batchByDay } from '../src/hours';
 import { buildPlan, overflowingDates } from '../src/plan';
 import { dayKey, isValidTimezone, utcOffsetLabel, utcRangeForLocalDays } from '../src/timezone';
 import type { Activity, ImportSettings, ProposedEntry } from '../src/types';
@@ -52,12 +51,11 @@ function chunksOf<T>(items: T[], size: number): T[][] {
 const REPO_CHUNK = 8;
 /** Matches the server's `MAX_SEARCH_WINDOW_DAYS` (src/routes/scan.ts). */
 const SEARCH_WINDOW_DAYS = 31;
-/** Matches the server's `MAX_ENTRIES` (src/routes/apply.ts) and
- *  `MAX_ENTRIES_PER_DAY` (client/render.ts). Batches are packed by whole
- *  days (`batchByDay`): the server's pre-write duplicate check is
- *  day-level, so a day split across two batches would have its second half
- *  skipped as "already exists" — which is also why a single day can never
- *  hold more than this many entries in one import. */
+/** Matches the server's `MAX_ENTRIES` (src/routes/apply.ts). Batches are
+ *  plain fixed-size chunks (`chunksOf`) — a day can now span several
+ *  batches, because every request carries `dayStarts` for its days, which
+ *  is what lets the route tell this import's earlier batches' entries from
+ *  foreign ones instead of relying on batches being day-aligned. */
 const APPLY_CHUNK = 10;
 
 function addDaysToKey(key: string, delta: number): string {
@@ -538,12 +536,6 @@ async function runImport(): Promise<void> {
   // day of entry.start); render.ts already disables the button in this
   // state, this is the belt to that brace.
   if (overflowingDates(checked, s0.prefs.timezone).length > 0) return;
-  // Same belt for the per-day entry cap: batchByDay never splits a day
-  // across batches, so a day with more than APPLY_CHUNK checked entries can
-  // never be imported. render.ts already disables the button in this state.
-  const perDayCounts = new Map<string, number>();
-  for (const e of checked) perDayCounts.set(e.date, (perDayCounts.get(e.date) ?? 0) + 1);
-  if ([...perDayCounts.values()].some((count) => count > APPLY_CHUNK)) return;
 
   store.update((s) => {
     s.importing = {
@@ -557,7 +549,17 @@ async function runImport(): Promise<void> {
   announce(`Import started: ${checked.length} entries.`);
 
   const userId = s0.connect.clockifyUser?.id ?? '';
-  const batches = batchByDay(checked, APPLY_CHUNK);
+  const batches = chunksOf(checked, APPLY_CHUNK);
+
+  // Every planned start for each day we are about to touch — checked or not —
+  // so the route can tell our earlier batches' entries from foreign ones
+  // (see decideWrite in src/plan.ts).
+  const touchedDays = new Set(checked.map((e) => e.date));
+  const dayStarts: Record<string, string[]> = {};
+  for (const e of s0.plan.entries) {
+    if (!touchedDays.has(e.date)) continue;
+    (dayStarts[e.date] ??= []).push(e.start);
+  }
 
   for (const [batchIndex, batch] of batches.entries()) {
     if (store.getState().importing.stopRequested) break;
@@ -588,6 +590,7 @@ async function runImport(): Promise<void> {
         userId,
         timezone: s0.prefs.timezone,
         entries: proposed,
+        dayStarts,
       });
       store.update((s) => {
         s.importing.results = [...s.importing.results, ...results];
@@ -1038,7 +1041,7 @@ function wirePreviewStep(): void {
     }
     if (target instanceof HTMLInputElement && target.dataset.hoursKey) {
       const key = target.dataset.hoursKey;
-      const raw = Number(target.value);
+      const raw = Number(target.value.trim().replace(',', '.'));
       // Deferred to a macrotask: `change` fires before the browser finishes
       // moving focus on Tab/click-away, and rebuilding the table synchronously
       // would destroy the element focus is about to land on. After a 0ms

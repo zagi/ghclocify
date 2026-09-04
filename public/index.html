@@ -395,7 +395,7 @@
           <div class="field field-checkbox">
             <input type="checkbox" id="split-evenly" name="split-evenly" checked />
             <label for="split-evenly">Split each day's hours evenly across its entries</label>
-            <p class="field-hint">
+            <p id="split-evenly-hint" class="field-hint">
               Each GitHub issue gets its own entry. Uncheck to set the hours of every entry by hand
               &mdash; &quot;Hours per day&quot; then only seeds the values.
             </p>
@@ -436,6 +436,7 @@
           <p id="preview-totals" class="totals" hidden>
             0 of 0 entries selected &mdash; 0.00 hours
           </p>
+          <p id="preview-free-warning" class="totals totals-warning" role="status" hidden></p>
 
           <div class="actions actions-nav">
             <button type="button" id="preview-back" class="btn btn-ghost">Back</button>
