@@ -59,6 +59,41 @@ export function findLanded(
   );
 }
 
+export type WriteDecision =
+  { action: 'write' } | { action: 'skip'; reason: 'foreign' | 'exists'; existing: ExistingEntry };
+
+/**
+ * The write route's pre-write check for one entry, given every start
+ * instant the plan holds for that entry's day (`plannedStarts`).
+ *
+ * Existing entries on the same local day and project are either OURS — their
+ * start is one of the planned starts, i.e. written by an earlier batch of
+ * this import or by an identical earlier run — or FOREIGN: anything else
+ * (a hand-made entry, an import with a different hours layout, another
+ * tab). One foreign entry marks the whole day as already imported, exactly
+ * the rule the preview applies; an "ours" entry blocks only its own start.
+ * That is what lets a day span several batches without double-booking.
+ */
+export function decideWrite(
+  entry: ProposedEntry,
+  existing: ExistingEntry[],
+  timezone: string,
+  plannedStarts: readonly string[],
+): WriteDecision {
+  const planned = new Set(plannedStarts.map((iso) => Date.parse(iso)));
+  const onDay = existing.filter(
+    (candidate) =>
+      candidate.projectId === entry.projectId &&
+      localDayOf(candidate.start, timezone) === entry.date,
+  );
+  const foreign = onDay.find((candidate) => !planned.has(Date.parse(candidate.start)));
+  if (foreign) return { action: 'skip', reason: 'foreign', existing: foreign };
+  const start = Date.parse(entry.start);
+  const same = onDay.find((candidate) => Date.parse(candidate.start) === start);
+  if (same) return { action: 'skip', reason: 'exists', existing: same };
+  return { action: 'write' };
+}
+
 /**
  * Dates on which at least one entry no longer starts on its own local day —
  * what a large manual hours total does to the later entries of a day. The

@@ -130,6 +130,10 @@ const VALID_BODY = {
   userId: UID,
   timezone: 'UTC',
   entries: [ENTRY_1, ENTRY_2],
+  dayStarts: {
+    '2026-08-01': ['2026-08-01T09:00:00Z'],
+    '2026-08-02': ['2026-08-02T09:00:00Z'],
+  },
 };
 
 afterEach(() => {
@@ -192,13 +196,19 @@ describe('apply route', () => {
     const fetchMock = neverCalledFetch();
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await post('/api/apply', {
-      ...VALID_BODY,
-      entries: Array.from({ length: 11 }, (_, i) => {
-        const date = `2026-08-${String(i + 1).padStart(2, '0')}`;
-        return { ...ENTRY_1, date, key: `${date}|` };
-      }),
+    const entries = Array.from({ length: 11 }, (_, i) => {
+      const date = `2026-08-${String(i + 1).padStart(2, '0')}`;
+      return {
+        ...ENTRY_1,
+        date,
+        key: `${date}|`,
+        start: `${date}T09:00:00Z`,
+        end: `${date}T17:00:00Z`,
+      };
     });
+    const dayStarts = Object.fromEntries(entries.map((e) => [e.date, [e.start]]));
+
+    const res = await post('/api/apply', { ...VALID_BODY, entries, dayStarts });
 
     expect(res.status).toBe(400);
     expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
@@ -366,6 +376,7 @@ describe('apply route', () => {
           end: '2026-08-03T17:00:00Z',
         },
       ],
+      dayStarts: { '2026-01-01': ['2026-08-03T09:00:00Z'] },
     });
 
     expect(res.status).toBe(400);
@@ -538,7 +549,11 @@ describe('apply route', () => {
       end: '2026-08-01T17:00:00Z',
     };
 
-    const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      entries: [first, second],
+      dayStarts: { '2026-08-01': ['2026-08-01T09:00:00Z', '2026-08-01T13:00:00Z'] },
+    });
 
     expect(res.status).toBe(200);
     const body = await res.json<{ results: ApplyResult[] }>();
@@ -593,7 +608,11 @@ describe('apply route', () => {
       end: '2026-08-01T18:00:00Z',
     };
 
-    const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      entries: [first, second],
+      dayStarts: { '2026-08-01': ['2026-08-01T09:00:00Z', '2026-08-01T17:00:00Z'] },
+    });
 
     expect(res.status).toBe(200);
     const body = await res.json<{ results: ApplyResult[] }>();
@@ -655,7 +674,11 @@ describe('apply route', () => {
       end: '2026-08-01T17:00:00Z',
     };
 
-    const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      entries: [first, second],
+      dayStarts: { '2026-08-01': ['2026-08-01T09:00:00Z', '2026-08-01T13:00:00Z'] },
+    });
 
     expect(res.status).toBe(200);
     const body = await res.json<{ results: ApplyResult[] }>();
@@ -711,9 +734,177 @@ describe('apply route', () => {
       };
     });
 
-    const res = await post('/api/apply', { ...VALID_BODY, entries });
+    const dayStarts = { '2026-08-01': entries.map((e) => e.start) };
+
+    const res = await post('/api/apply', { ...VALID_BODY, entries, dayStarts });
 
     expect(res.status).toBe(200);
     expect(createCount).toBe(10);
+  });
+
+  it('21. a day split across two requests: the second request writes the remaining entries instead of skipping the day', async () => {
+    // Request 1 wrote entry A (09:00). Request 2 carries entry B (13:00) and
+    // dayStarts listing both; the pre-check sees A and must treat it as ours.
+    let createCount = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        userHandler(UID),
+        existingEntryHandler('2026-08-01T09:00:00Z'),
+        {
+          test: isCreateEntry,
+          respond: () => {
+            createCount += 1;
+            return jsonResponse({ id: `new-${createCount}` });
+          },
+        },
+      ]),
+    );
+    const second = {
+      ...ENTRY_1,
+      key: '2026-08-01|acme/repo#2',
+      group: 'acme/repo#2',
+      start: '2026-08-01T13:00:00Z',
+      end: '2026-08-01T17:00:00Z',
+    };
+
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      entries: [second],
+      dayStarts: { '2026-08-01': ['2026-08-01T09:00:00Z', '2026-08-01T13:00:00Z'] },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toEqual([
+      { date: '2026-08-01', key: second.key, ok: true, entryId: 'new-1' },
+    ]);
+    expect(createCount).toBe(1);
+  });
+
+  it('22. a foreign existing entry (start not in dayStarts) still blocks every entry of that day', async () => {
+    const fetchMock = routedFetch([
+      userHandler(UID),
+      existingEntryHandler('2026-08-01T07:30:00Z'),
+      { test: isCreateEntry, respond: () => jsonResponse({ id: 'should-not-happen' }) },
+    ]);
+    vi.stubGlobal('fetch', fetchMock);
+    const second = {
+      ...ENTRY_1,
+      key: '2026-08-01|acme/repo#2',
+      group: 'acme/repo#2',
+      start: '2026-08-01T13:00:00Z',
+      end: '2026-08-01T17:00:00Z',
+    };
+
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      entries: [ENTRY_1, second],
+      dayStarts: { '2026-08-01': ['2026-08-01T09:00:00Z', '2026-08-01T13:00:00Z'] },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results.map((r) => r.skipped)).toEqual([true, true]);
+    const postCalls = fetchMock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(postCalls).toHaveLength(0);
+  });
+
+  it('23. re-running an identical import skips every entry individually as Already exists', async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        userHandler(UID),
+        {
+          test: isListEntries,
+          respond: () =>
+            jsonResponse(
+              [
+                {
+                  id: 'e1',
+                  timeInterval: { start: '2026-08-01T09:00:00Z', end: '2026-08-01T13:00:00Z' },
+                  description: 'a',
+                  projectId: PROJECT_ID,
+                },
+                {
+                  id: 'e2',
+                  timeInterval: { start: '2026-08-01T13:00:00Z', end: '2026-08-01T17:00:00Z' },
+                  description: 'b',
+                  projectId: PROJECT_ID,
+                },
+              ],
+              { headers: { 'Last-Page': 'true' } },
+            ),
+        },
+        { test: isCreateEntry, respond: () => jsonResponse({ id: 'should-not-happen' }) },
+      ]),
+    );
+    const first = { ...ENTRY_1, end: '2026-08-01T13:00:00Z' };
+    const second = {
+      ...ENTRY_1,
+      key: '2026-08-01|acme/repo#2',
+      group: 'acme/repo#2',
+      start: '2026-08-01T13:00:00Z',
+      end: '2026-08-01T17:00:00Z',
+    };
+
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      entries: [first, second],
+      dayStarts: { '2026-08-01': ['2026-08-01T09:00:00Z', '2026-08-01T13:00:00Z'] },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toEqual([
+      { date: '2026-08-01', key: first.key, ok: true, skipped: true, error: 'Already exists' },
+      { date: '2026-08-01', key: second.key, ok: true, skipped: true, error: 'Already exists' },
+    ]);
+  });
+
+  it('24. dayStarts is required, must cover every entry, and its instants must fall on their key day — each violation is a 400 with no fetch', async () => {
+    const fetchMock = neverCalledFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { dayStarts: _omit, ...withoutDayStarts } = VALID_BODY;
+    void _omit;
+    expect((await post('/api/apply', withoutDayStarts)).status).toBe(400);
+
+    // Entry's own start missing from its day's list.
+    expect(
+      (
+        await post('/api/apply', {
+          ...VALID_BODY,
+          entries: [ENTRY_1],
+          dayStarts: { '2026-08-01': ['2026-08-01T13:00:00Z'] },
+        })
+      ).status,
+    ).toBe(400);
+
+    // An instant listed under the wrong day.
+    expect(
+      (
+        await post('/api/apply', {
+          ...VALID_BODY,
+          entries: [ENTRY_1],
+          dayStarts: { '2026-08-01': ['2026-08-01T09:00:00Z', '2026-08-02T09:00:00Z'] },
+        })
+      ).status,
+    ).toBe(400);
+
+    // Malformed instant.
+    expect(
+      (
+        await post('/api/apply', {
+          ...VALID_BODY,
+          entries: [ENTRY_1],
+          dayStarts: { '2026-08-01': ['2026-08-01T09:00:00Z', 'yesterday'] },
+        })
+      ).status,
+    ).toBe(400);
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

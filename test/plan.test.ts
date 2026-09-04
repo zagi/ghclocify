@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPlan, findDuplicate, findLanded, overflowingDates } from '../src/plan';
+import { buildPlan, decideWrite, findDuplicate, findLanded, overflowingDates } from '../src/plan';
 import type { ExistingEntry, ProposedEntry } from '../src/types';
 
 function proposed(overrides: Partial<ProposedEntry> = {}): ProposedEntry {
@@ -242,5 +242,73 @@ describe('buildPlan', () => {
     });
     expect(overflowingDates([edge], 'Europe/Warsaw')).toEqual(['2026-08-04']);
     expect(overflowingDates([edge], 'UTC')).toEqual([]);
+  });
+
+  it('15. decideWrite: no existing entries on the day -> write', () => {
+    const entry = proposed({ start: '2026-08-03T09:00:00Z', end: '2026-08-03T13:00:00Z' });
+    expect(decideWrite(entry, [], 'UTC', ['2026-08-03T09:00:00Z', '2026-08-03T13:00:00Z'])).toEqual(
+      {
+        action: 'write',
+      },
+    );
+    // Other days and other projects are irrelevant.
+    const otherDay = existing({ id: 'od', start: '2026-08-04T09:00:00Z' });
+    const otherProject = existing({ id: 'op', projectId: 'proj2' });
+    expect(decideWrite(entry, [otherDay, otherProject], 'UTC', ['2026-08-03T09:00:00Z'])).toEqual({
+      action: 'write',
+    });
+  });
+
+  it('16. decideWrite: an existing entry whose start is a planned start is ours — blocks only its own start', () => {
+    const planned = ['2026-08-03T09:00:00Z', '2026-08-03T13:00:00Z'];
+    const first = proposed({ start: '2026-08-03T09:00:00Z', end: '2026-08-03T13:00:00Z' });
+    const second = proposed({
+      key: '2026-08-03|acme/demo#2',
+      group: 'acme/demo#2',
+      start: '2026-08-03T13:00:00Z',
+      end: '2026-08-03T17:00:00Z',
+    });
+    const firstLanded = existing({ id: 'ours', start: '2026-08-03T09:00:00Z' });
+    expect(decideWrite(first, [firstLanded], 'UTC', planned)).toEqual({
+      action: 'skip',
+      reason: 'exists',
+      existing: firstLanded,
+    });
+    expect(decideWrite(second, [firstLanded], 'UTC', planned)).toEqual({ action: 'write' });
+    // Millisecond formatting differences do not matter: instants compare.
+    const ms = existing({ id: 'ms', start: '2026-08-03T09:00:00.000Z' });
+    expect(decideWrite(second, [ms], 'UTC', planned)).toEqual({ action: 'write' });
+  });
+
+  it('17. decideWrite: an existing entry with a start outside the plan is foreign — blocks the whole day', () => {
+    const planned = ['2026-08-03T09:00:00Z', '2026-08-03T13:00:00Z'];
+    const second = proposed({ start: '2026-08-03T13:00:00Z', end: '2026-08-03T17:00:00Z' });
+    const manual = existing({ id: 'manual', start: '2026-08-03T07:30:00Z' });
+    expect(decideWrite(second, [manual], 'UTC', planned)).toEqual({
+      action: 'skip',
+      reason: 'foreign',
+      existing: manual,
+    });
+    // Foreign wins even when our own earlier entry is also there.
+    const ours = existing({ id: 'ours', start: '2026-08-03T09:00:00Z' });
+    expect(decideWrite(second, [ours, manual], 'UTC', planned).action).toBe('skip');
+    expect((decideWrite(second, [ours, manual], 'UTC', planned) as { reason: string }).reason).toBe(
+      'foreign',
+    );
+  });
+
+  it('18. decideWrite compares local days: a 23:00Z-previous-day entry is on the day under Europe/Warsaw, not under UTC', () => {
+    const entry = proposed({
+      date: '2026-08-03',
+      start: '2026-08-03T07:00:00Z',
+      end: '2026-08-03T11:00:00Z',
+    });
+    const late = existing({ id: 'late', start: '2026-08-02T23:00:00Z' });
+    expect(decideWrite(entry, [late], 'Europe/Warsaw', ['2026-08-03T07:00:00Z']).action).toBe(
+      'skip',
+    );
+    expect(decideWrite(entry, [late], 'UTC', ['2026-08-03T07:00:00Z'])).toEqual({
+      action: 'write',
+    });
   });
 });

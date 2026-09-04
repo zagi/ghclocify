@@ -16,7 +16,7 @@ import { AppError } from '../problems';
 import { isClockifyHost, isClockifyId, isDateKey } from '../validate';
 import { isValidTimezone, localDayOf, toClockifyIso } from '../timezone';
 import { baseUrl, createEntry, getUser, listEntries } from '../clockify';
-import { findDuplicate, findLanded } from '../plan';
+import { decideWrite, findLanded } from '../plan';
 import { CLOCKIFY_MAX_DESCRIPTION } from '../describe';
 import type { ApplyResult, ProposedEntry } from '../types';
 
@@ -24,15 +24,19 @@ export const applyRoutes = new Hono<{ Bindings: Env }>();
 
 /**
  * Rule 1: the client sends batches and shows progress; a killed request can
- * then lose at most this many writes, each individually reported. Ten, not
- * five, because a batch must hold a whole day: the pre-write duplicate
- * check below is day-level against entries fetched before the batch, so a
- * day split across two batches would see its first half as "already
- * exists" — and a day now holds one entry per issue.
+ * then lose at most this many writes, each individually reported. Batches no
+ * longer need to hold a whole day — `dayStarts` (below) lets `decideWrite`
+ * tell this import's earlier writes from foreign entries across batches, so
+ * ten here only bounds writes lost to a killed request, not a day's size.
  */
 const MAX_ENTRIES = 10;
 
 const DAY_MS = 86_400_000;
+
+/** Sanity bounds for `dayStarts`: a day can hold at most this many planned
+ *  entries, and a batch's days together at most this many instants. */
+const MAX_STARTS_PER_DAY = 500;
+const MAX_STARTS_TOTAL = 5000;
 
 /** `yyyy-MM-ddThh:mm:ssZ`, no milliseconds — matches `ProposedEntry`'s own
  *  documented "second precision" contract, which is exactly what
@@ -190,6 +194,63 @@ function readEntries(value: unknown, timezone: string): ProposedEntry[] {
 }
 
 /**
+ * `dayStarts` — for every day present in this batch, every start instant
+ * the client's plan holds for that day (all entries, checked or not). The
+ * pre-write check uses it to tell this import's own earlier writes from
+ * foreign entries (see `decideWrite`). Validated as strictly as entries:
+ * date keys, second-precision UTC instants, each on its key's local day.
+ */
+function readDayStarts(
+  value: unknown,
+  entries: ProposedEntry[],
+  timezone: string,
+): Record<string, string[]> {
+  const raw = asRecord(value);
+  const out: Record<string, string[]> = {};
+  let total = 0;
+  for (const [date, list] of Object.entries(raw)) {
+    if (!isDateKey(date)) {
+      throw new AppError(400, 'invalid_request', 'dayStarts keys must be YYYY-MM-DD dates');
+    }
+    if (!Array.isArray(list) || list.length > MAX_STARTS_PER_DAY) {
+      throw new AppError(
+        400,
+        'invalid_request',
+        `dayStarts[${date}] must be an array of at most ${MAX_STARTS_PER_DAY} instants`,
+      );
+    }
+    total += list.length;
+    if (total > MAX_STARTS_TOTAL) {
+      throw new AppError(400, 'invalid_request', 'dayStarts lists too many instants');
+    }
+    out[date] = list.map((iso) => {
+      if (typeof iso !== 'string' || !ISO_INSTANT_RE.test(iso) || Number.isNaN(Date.parse(iso))) {
+        throw new AppError(400, 'invalid_request', `dayStarts[${date}] holds a malformed instant`);
+      }
+      if (localDayOf(iso, timezone) !== date) {
+        throw new AppError(
+          400,
+          'invalid_request',
+          `dayStarts[${date}] holds an instant that falls on another local day`,
+        );
+      }
+      return iso;
+    });
+  }
+  for (const entry of entries) {
+    const starts = out[entry.date];
+    if (!starts || !starts.some((iso) => Date.parse(iso) === Date.parse(entry.start))) {
+      throw new AppError(
+        400,
+        'invalid_request',
+        `dayStarts[${entry.date}] must include the start of every entry on that day`,
+      );
+    }
+  }
+  return out;
+}
+
+/**
  * A "may or may not have landed" failure: the fetch itself failed (network
  * error, timeout — `upstream_timeout`) or the response was a genuinely
  * retryable status (429/408/5xx) that `fetchJson` gave up on after
@@ -244,6 +305,7 @@ applyRoutes.post('/', async (c) => {
   // against entry.start rather than trusting the client's claimed date.
   const timezone = requireTimezone(body);
   const entries = readEntries(body.entries, timezone);
+  const dayStarts = readDayStarts(body.dayStarts, entries, timezone);
 
   // Belt and braces against a client-supplied userId that diverges from the
   // API key's actual owner: listEntries (the pre-write duplicate check)
@@ -278,12 +340,15 @@ applyRoutes.post('/', async (c) => {
   );
 
   // Entries written in THIS batch, keyed `${projectId}@${start}`. They are
-  // deliberately not pushed into `existing`: that list drives the day-level
-  // check, and a day now legitimately holds several entries (one per
-  // issue), so a sibling written moments ago must not turn the rest of its
-  // day into duplicates. An exact repeat (same project, same start) is
-  // still caught here — the belt-and-braces this route keeps against a
-  // client that sends the same entry twice.
+  // deliberately not pushed into `existing`: that list drives `decideWrite`,
+  // and a day now legitimately holds several entries (one per issue), so a
+  // sibling written moments ago must not turn the rest of its day into
+  // duplicates — `decideWrite` already recognizes it as ours via
+  // `dayStarts`. This set still guards exact repeats within THIS batch (same
+  // project, same start) — the belt-and-braces this route keeps against a
+  // client that sends the same entry twice; the cross-batch case (an
+  // earlier batch's own write) is handled by `decideWrite` seeing that
+  // earlier write in `existing` and recognizing its start as planned.
   const writtenStarts = new Set<string>();
   const startKey = (entry: ProposedEntry) => `${entry.projectId}@${entry.start}`;
 
@@ -291,7 +356,8 @@ applyRoutes.post('/', async (c) => {
   // only 30 requests/hour, workspace-wide — firing concurrently just
   // converts that budget into 429s.
   for (const entry of entries) {
-    if (findDuplicate(entry, existing, timezone) || writtenStarts.has(startKey(entry))) {
+    const decision = decideWrite(entry, existing, timezone, dayStarts[entry.date] ?? []);
+    if (decision.action === 'skip' || writtenStarts.has(startKey(entry))) {
       results.push({
         date: entry.date,
         key: entry.key,
