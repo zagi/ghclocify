@@ -1488,7 +1488,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - [ ] **Step 1: Intro** — in the first paragraph, after "You pick a date range and a scope, preview exactly what will be written (including what already exists, so re-running a range is safe), and import." add:
 
 ```markdown
-Each GitHub issue you touched on a day becomes its own entry (commits that
+Each GitHub issue you touched on a day becomes its own entry (activities that
 reference no issue share one "Other" entry), and the day's hours are split
 evenly across them — or, if you untick that option, typed in per entry with
 a running total before you import.
