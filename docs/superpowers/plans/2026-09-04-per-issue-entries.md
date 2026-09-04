@@ -4,7 +4,7 @@
 
 **Goal:** One Clockify entry per (day, GitHub issue) instead of one per day, with the day's hours split evenly across those entries by default, and a per-entry manual hours mode (with a running total) when the user unchecks the even-split option.
 
-**Architecture:** The grouping and the hour split live entirely in the pure, client-safe `src/aggregate.ts` (bundled into both the Worker and the browser). Activities on a day are bucketed by an *issue group* — `owner/repo#12` for a title referencing issue 12, `''` for everything else — and laid out back-to-back from the configured start time, each getting an equal whole-second share of `hoursPerDay` unless the caller passes a manual override keyed by the entry's stable `key`. The preview's duplicate rule (any existing Clockify entry on the same day and project marks the day as already imported) is unchanged; the write route stops treating same-batch siblings as duplicates by checking them on exact start instant instead, and the client packs whole days into each apply batch so a day never straddles two batches.
+**Architecture:** The grouping and the hour split live entirely in the pure, client-safe `src/aggregate.ts` (bundled into both the Worker and the browser). Activities on a day are bucketed by an _issue group_ — `owner/repo#12` for a title referencing issue 12, `''` for everything else — and laid out back-to-back from the configured start time, each getting an equal whole-second share of `hoursPerDay` unless the caller passes a manual override keyed by the entry's stable `key`. The preview's duplicate rule (any existing Clockify entry on the same day and project marks the day as already imported) is unchanged; the write route stops treating same-batch siblings as duplicates by checking them on exact start instant instead, and the client packs whole days into each apply batch so a day never straddles two batches.
 
 **Tech Stack:** TypeScript 6, Hono 4, Cloudflare Workers, vanilla-TS client bundled by esbuild, vitest 4 (pure `node` project for `src/*` modules, `@cloudflare/vitest-pool-workers` for routes), ESLint 10 + Prettier.
 
@@ -37,40 +37,42 @@ Copied from the original plan (`docs/superpowers/plans/2026-08-31-gh2clockify.md
 6. **Layout.** Entries on a day are back-to-back from `startTime`, unchecked ones included (a gap is harmless; redistributing on deselect would make starts unstable).
 7. **Overflow past midnight.** A manual total can push a later entry's start onto the next local day, which the apply route rejects. `overflowingDates(entries, timezone)` in `src/plan.ts` finds those days; the client shows an error and disables import while any checked entry overflows. Aggregate stays pure and trusting.
 8. **Duplicate rule in the preview: unchanged.** `findDuplicate` matches (local day, project). One existing entry on the day marks every proposed entry on that day a duplicate. This keeps re-runs safe and keeps the README's documented limitation true.
-9. **Duplicate rule in the write route.** The batch-level pre-check runs against the list fetched *before* the batch (day-level, as today). Entries written in the same batch are tracked in a `writtenStarts` set keyed `${projectId}@${start}` instead of being pushed into `existing`, so a sibling on the same day is not mistaken for a duplicate but an exact repeat still is. The post-ambiguous-failure recheck uses `findLanded` (project + exact start instant). `MAX_ENTRIES` rises from 5 to 10 and the client packs whole days per batch (`batchByDay`): a day split across two batches would be skipped by the second batch's fresh pre-check.
+9. **Duplicate rule in the write route.** The batch-level pre-check runs against the list fetched _before_ the batch (day-level, as today). Entries written in the same batch are tracked in a `writtenStarts` set keyed `${projectId}@${start}` instead of being pushed into `existing`, so a sibling on the same day is not mistaken for a duplicate but an exact repeat still is. The post-ambiguous-failure recheck uses `findLanded` (project + exact start instant). `MAX_ENTRIES` rises from 5 to 10 and the client packs whole days per batch (`batchByDay`): a day split across two batches would be skipped by the second batch's fresh pre-check.
 10. **Preference.** `prefs.splitEvenly: boolean` (default `true`), persisted like every other pref. The checkbox lives in step 4 above the preview table so toggling it reveals the inputs immediately.
 11. **Hours input.** `<input type="number" min="0.25" max="24" step="0.25">` per row in manual mode, wired on `change` (not `input`): the table is rebuilt on every state change, so recomputing on each keystroke would steal focus mid-typing.
 
 ## File map
 
-| File | Change |
-| --- | --- |
-| `src/hours.ts` | **Create.** `splitSeconds`, `hoursToSeconds`, `batchByDay`. |
-| `test/hours.test.ts` | **Create.** |
-| `src/types.ts` | `ProposedEntry` gains `key`, `group`; `ApplyResult` gains `key`. |
-| `src/describe.ts` | Export `issueNumbersIn(title)`; `describeDay` uses it. |
-| `src/aggregate.ts` | Export `issueGroupOf`, `groupLabel`, `entryKey`, `HoursOverrides`; group + split + layout. |
-| `src/plan.ts` | Add `findLanded`, `overflowingDates`. |
-| `src/routes/apply.ts` | Validate `key`/`group`; `MAX_ENTRIES = 10`; `writtenStarts`; `findLanded` recheck; `key` in results. |
-| `client/state.ts` | `prefs.splitEvenly`; `checkedKeys` (was `checkedDates`); `entryHours`. |
-| `client/app.ts` | Overrides into `aggregate`; carry-over by key; whole-day batches; new listeners. |
-| `client/render.ts` | Issue + Hours columns, per-row hours input, split checkbox, totals with overflow error, results with issue label. |
-| `public/index.html` | Split checkbox, two new columns, `colspan` 9. |
-| `public/style.css` | `.hours-input`, `.totals.is-error`. |
-| `README.md` | Describe per-issue entries + split option; adjust the duplicate paragraph. |
-| `tsconfig.client.json`, `vitest.config.ts` | Register `src/hours.ts` / `test/hours.test.ts`. |
+| File                                       | Change                                                                                                            |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `src/hours.ts`                             | **Create.** `splitSeconds`, `hoursToSeconds`, `batchByDay`.                                                       |
+| `test/hours.test.ts`                       | **Create.**                                                                                                       |
+| `src/types.ts`                             | `ProposedEntry` gains `key`, `group`; `ApplyResult` gains `key`.                                                  |
+| `src/describe.ts`                          | Export `issueNumbersIn(title)`; `describeDay` uses it.                                                            |
+| `src/aggregate.ts`                         | Export `issueGroupOf`, `groupLabel`, `entryKey`, `HoursOverrides`; group + split + layout.                        |
+| `src/plan.ts`                              | Add `findLanded`, `overflowingDates`.                                                                             |
+| `src/routes/apply.ts`                      | Validate `key`/`group`; `MAX_ENTRIES = 10`; `writtenStarts`; `findLanded` recheck; `key` in results.              |
+| `client/state.ts`                          | `prefs.splitEvenly`; `checkedKeys` (was `checkedDates`); `entryHours`.                                            |
+| `client/app.ts`                            | Overrides into `aggregate`; carry-over by key; whole-day batches; new listeners.                                  |
+| `client/render.ts`                         | Issue + Hours columns, per-row hours input, split checkbox, totals with overflow error, results with issue label. |
+| `public/index.html`                        | Split checkbox, two new columns, `colspan` 9.                                                                     |
+| `public/style.css`                         | `.hours-input`, `.totals.is-error`.                                                                               |
+| `README.md`                                | Describe per-issue entries + split option; adjust the duplicate paragraph.                                        |
+| `tsconfig.client.json`, `vitest.config.ts` | Register `src/hours.ts` / `test/hours.test.ts`.                                                                   |
 
 ---
 
 ### Task 1: Pure hour-splitting and batching helpers (`src/hours.ts`)
 
 **Files:**
+
 - Create: `src/hours.ts`
 - Create: `test/hours.test.ts`
 - Modify: `vitest.config.ts` (add `'test/hours.test.ts'` to the `pure` project's `include`)
 - Modify: `tsconfig.client.json` (add `"src/hours.ts"` to `include`)
 
 **Interfaces:**
+
 - Produces:
   - `splitSeconds(totalSeconds: number, count: number): number[]`
   - `hoursToSeconds(hours: number): number`
@@ -266,6 +268,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 2: Issue grouping, even split and overrides in `aggregate`
 
 **Files:**
+
 - Modify: `src/types.ts` (`ProposedEntry`, `ApplyResult`)
 - Modify: `src/describe.ts` (export `issueNumbersIn`)
 - Modify: `src/aggregate.ts`
@@ -274,10 +277,11 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `test/aggregate.test.ts`, `test/describe.test.ts`, `test/plan.test.ts` (fixture gains `key`/`group`), `test/routes-apply.test.ts` (`ENTRY_1`/`ENTRY_2` fixtures gain `key`/`group`)
 
 **Interfaces:**
+
 - Consumes: `splitSeconds`, `hoursToSeconds` from `src/hours.ts` (Task 1).
 - Produces:
   - `ProposedEntry` now has `key: string` and `group: string` (both required).
-  - `ApplyResult` now has `key: string` (required; the route fills it in Task 3 — until then the type is declared but the route's result objects are updated in Task 3, so in *this* task add `key` to `ApplyResult` and add `key: entry.key` to every `results.push` in `src/routes/apply.ts` — there are seven — otherwise typecheck fails).
+  - `ApplyResult` now has `key: string` (required; the route fills it in Task 3 — until then the type is declared but the route's result objects are updated in Task 3, so in _this_ task add `key` to `ApplyResult` and add `key: entry.key` to every `results.push` in `src/routes/apply.ts` — there are seven — otherwise typecheck fails).
   - `issueNumbersIn(title: string): number[]` from `src/describe.ts`.
   - `issueGroupOf(activity: Activity): string`, `groupLabel(group: string): string`, `entryKey(date: string, group: string): string`, `type HoursOverrides = Record<string, number>` from `src/aggregate.ts`.
   - `aggregate(activities, settings, overrides?: HoursOverrides)`.
@@ -302,128 +306,125 @@ describe('issueNumbersIn', () => {
 Append to `describe('aggregate', ...)` in `test/aggregate.test.ts` (import `entryKey`, `groupLabel`, `issueGroupOf` from `../src/aggregate` alongside `aggregate`):
 
 ```ts
-  it('10. splits a day into one entry per referenced issue, laid out back-to-back with equal hours', () => {
-    const activities: Activity[] = [
-      act({ timestamp: '2026-08-03T09:00:00Z', title: 'start on #123' }),
-      act({ timestamp: '2026-08-03T11:00:00Z', title: 'work on #124' }),
-      act({ timestamp: '2026-08-03T15:00:00Z', title: 'finish #123' }),
-    ];
-    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
-    expect(entries).toHaveLength(2);
-    expect(entries.map((e) => e.group)).toEqual([
-      'acme/demo-project#123',
-      'acme/demo-project#124',
-    ]);
-    expect(entries.map((e) => e.key)).toEqual([
-      '2026-08-03|acme/demo-project#123',
-      '2026-08-03|acme/demo-project#124',
-    ]);
-    expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
-    expect(entries[0]?.end).toBe('2026-08-03T13:00:00Z');
-    expect(entries[1]?.start).toBe('2026-08-03T13:00:00Z');
-    expect(entries[1]?.end).toBe('2026-08-03T17:00:00Z');
-    expect(entries[0]?.activityCount).toBe(2);
-    expect(entries[1]?.activityCount).toBe(1);
-    expect(entries[0]?.description).toContain('start on #123');
-    expect(entries[0]?.description).toContain('finish #123');
-    expect(entries[0]?.description).not.toContain('work on #124');
-  });
+it('10. splits a day into one entry per referenced issue, laid out back-to-back with equal hours', () => {
+  const activities: Activity[] = [
+    act({ timestamp: '2026-08-03T09:00:00Z', title: 'start on #123' }),
+    act({ timestamp: '2026-08-03T11:00:00Z', title: 'work on #124' }),
+    act({ timestamp: '2026-08-03T15:00:00Z', title: 'finish #123' }),
+  ];
+  const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
+  expect(entries).toHaveLength(2);
+  expect(entries.map((e) => e.group)).toEqual(['acme/demo-project#123', 'acme/demo-project#124']);
+  expect(entries.map((e) => e.key)).toEqual([
+    '2026-08-03|acme/demo-project#123',
+    '2026-08-03|acme/demo-project#124',
+  ]);
+  expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
+  expect(entries[0]?.end).toBe('2026-08-03T13:00:00Z');
+  expect(entries[1]?.start).toBe('2026-08-03T13:00:00Z');
+  expect(entries[1]?.end).toBe('2026-08-03T17:00:00Z');
+  expect(entries[0]?.activityCount).toBe(2);
+  expect(entries[1]?.activityCount).toBe(1);
+  expect(entries[0]?.description).toContain('start on #123');
+  expect(entries[0]?.description).toContain('finish #123');
+  expect(entries[0]?.description).not.toContain('work on #124');
+});
 
-  it('11. activities referencing no issue form a single "other" group on the day, keyed with an empty group', () => {
-    const activities: Activity[] = [
-      act({ timestamp: '2026-08-03T09:00:00Z', title: 'chore: tidy' }),
-      act({ timestamp: '2026-08-03T10:00:00Z', title: 'fix #7' }),
-      act({ timestamp: '2026-08-03T12:00:00Z', title: 'chore: more tidy' }),
-    ];
-    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
-    expect(entries.map((e) => e.group)).toEqual(['', 'acme/demo-project#7']);
-    expect(entries[0]?.key).toBe('2026-08-03|');
-    expect(entries[0]?.activityCount).toBe(2);
-    expect(entries[0]?.date).toBe('2026-08-03');
-    expect(entries[1]?.date).toBe('2026-08-03');
-  });
+it('11. activities referencing no issue form a single "other" group on the day, keyed with an empty group', () => {
+  const activities: Activity[] = [
+    act({ timestamp: '2026-08-03T09:00:00Z', title: 'chore: tidy' }),
+    act({ timestamp: '2026-08-03T10:00:00Z', title: 'fix #7' }),
+    act({ timestamp: '2026-08-03T12:00:00Z', title: 'chore: more tidy' }),
+  ];
+  const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
+  expect(entries.map((e) => e.group)).toEqual(['', 'acme/demo-project#7']);
+  expect(entries[0]?.key).toBe('2026-08-03|');
+  expect(entries[0]?.activityCount).toBe(2);
+  expect(entries[0]?.date).toBe('2026-08-03');
+  expect(entries[1]?.date).toBe('2026-08-03');
+});
 
-  it('12. orders a day\'s groups by their earliest activity, not by issue number', () => {
-    const activities: Activity[] = [
-      act({ timestamp: '2026-08-03T14:00:00Z', title: 'late #5' }),
-      act({ timestamp: '2026-08-03T09:00:00Z', title: 'early #900' }),
-      act({ timestamp: '2026-08-03T08:00:00Z', title: 'earliest #5' }),
-    ];
-    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
-    expect(entries.map((e) => e.group)).toEqual(['acme/demo-project#5', 'acme/demo-project#900']);
-  });
+it("12. orders a day's groups by their earliest activity, not by issue number", () => {
+  const activities: Activity[] = [
+    act({ timestamp: '2026-08-03T14:00:00Z', title: 'late #5' }),
+    act({ timestamp: '2026-08-03T09:00:00Z', title: 'early #900' }),
+    act({ timestamp: '2026-08-03T08:00:00Z', title: 'earliest #5' }),
+  ];
+  const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
+  expect(entries.map((e) => e.group)).toEqual(['acme/demo-project#5', 'acme/demo-project#900']);
+});
 
-  it('13. shares are whole seconds summing exactly to hoursPerDay, remainder to the earliest entries', () => {
-    const activities: Activity[] = Array.from({ length: 7 }, (_, i) =>
-      act({ timestamp: `2026-08-03T0${i + 1}:00:00Z`, title: `task #${i + 1}` }),
-    );
-    const { entries } = aggregate(
-      activities,
-      baseSettings({ timezone: 'UTC', hoursPerDay: 8, startTime: '09:00' }),
-    );
-    const seconds = entries.map((e) => (Date.parse(e.end) - Date.parse(e.start)) / 1000);
-    expect(seconds.every(Number.isInteger)).toBe(true);
-    expect(seconds.reduce((a, b) => a + b, 0)).toBe(28_800);
-    expect(seconds).toEqual([4115, 4115, 4114, 4114, 4114, 4114, 4114]);
-    expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
-    expect(entries[6]?.end).toBe('2026-08-03T17:00:00Z');
-  });
+it('13. shares are whole seconds summing exactly to hoursPerDay, remainder to the earliest entries', () => {
+  const activities: Activity[] = Array.from({ length: 7 }, (_, i) =>
+    act({ timestamp: `2026-08-03T0${i + 1}:00:00Z`, title: `task #${i + 1}` }),
+  );
+  const { entries } = aggregate(
+    activities,
+    baseSettings({ timezone: 'UTC', hoursPerDay: 8, startTime: '09:00' }),
+  );
+  const seconds = entries.map((e) => (Date.parse(e.end) - Date.parse(e.start)) / 1000);
+  expect(seconds.every(Number.isInteger)).toBe(true);
+  expect(seconds.reduce((a, b) => a + b, 0)).toBe(28_800);
+  expect(seconds).toEqual([4115, 4115, 4114, 4114, 4114, 4114, 4114]);
+  expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
+  expect(entries[6]?.end).toBe('2026-08-03T17:00:00Z');
+});
 
-  it('14. a manual override replaces only that entry\'s hours; others keep the even share and layout stays sequential', () => {
-    const activities: Activity[] = [
-      act({ timestamp: '2026-08-03T09:00:00Z', title: 'a #1' }),
-      act({ timestamp: '2026-08-03T10:00:00Z', title: 'b #2' }),
-    ];
+it("14. a manual override replaces only that entry's hours; others keep the even share and layout stays sequential", () => {
+  const activities: Activity[] = [
+    act({ timestamp: '2026-08-03T09:00:00Z', title: 'a #1' }),
+    act({ timestamp: '2026-08-03T10:00:00Z', title: 'b #2' }),
+  ];
+  const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }), {
+    '2026-08-03|acme/demo-project#1': 1.5,
+  });
+  expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
+  expect(entries[0]?.end).toBe('2026-08-03T10:30:00Z');
+  expect(entries[1]?.start).toBe('2026-08-03T10:30:00Z');
+  expect(entries[1]?.end).toBe('2026-08-03T14:30:00Z');
+});
+
+it('15. an override that is not a finite number in (0, 24] is ignored, not clamped', () => {
+  const activities: Activity[] = [act({ timestamp: '2026-08-03T09:00:00Z', title: 'a #1' })];
+  for (const bad of [0, -1, 25, Number.NaN, Number.POSITIVE_INFINITY]) {
     const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }), {
-      '2026-08-03|acme/demo-project#1': 1.5,
+      '2026-08-03|acme/demo-project#1': bad,
     });
-    expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
-    expect(entries[0]?.end).toBe('2026-08-03T10:30:00Z');
-    expect(entries[1]?.start).toBe('2026-08-03T10:30:00Z');
-    expect(entries[1]?.end).toBe('2026-08-03T14:30:00Z');
-  });
-
-  it('15. an override that is not a finite number in (0, 24] is ignored, not clamped', () => {
-    const activities: Activity[] = [act({ timestamp: '2026-08-03T09:00:00Z', title: 'a #1' })];
-    for (const bad of [0, -1, 25, Number.NaN, Number.POSITIVE_INFINITY]) {
-      const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }), {
-        '2026-08-03|acme/demo-project#1': bad,
-      });
-      expect(entries[0]?.end).toBe('2026-08-03T17:00:00Z');
-    }
-  });
-
-  it('16. the same issue number in two repos is two groups; a title referencing two issues is its own group', () => {
-    const activities: Activity[] = [
-      act({ repo: 'acme/one', timestamp: '2026-08-03T09:00:00Z', title: 'fix #1' }),
-      act({ repo: 'acme/two', timestamp: '2026-08-03T10:00:00Z', title: 'fix #1' }),
-      act({ repo: 'acme/one', timestamp: '2026-08-03T11:00:00Z', title: 'refs #2 #1' }),
-    ];
-    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
-    expect(entries.map((e) => e.group)).toEqual(['acme/one#1', 'acme/two#1', 'acme/one#1#2']);
-  });
-
-  it('17. issueGroupOf / groupLabel / entryKey helpers', () => {
-    expect(issueGroupOf(act({ repo: 'acme/x', title: 'no ref' }))).toBe('');
-    expect(issueGroupOf(act({ repo: 'acme/x', title: 'see #34 and #12' }))).toBe('acme/x#12#34');
-    expect(groupLabel('')).toBe('Other');
-    expect(groupLabel('acme/x#12')).toBe('#12');
-    expect(groupLabel('acme/x#12#34')).toBe('#12 #34');
-    expect(entryKey('2026-08-03', 'acme/x#12')).toBe('2026-08-03|acme/x#12');
-    expect(entryKey('2026-08-03', '')).toBe('2026-08-03|');
-  });
-
-  it('18. with no issue references at all the output is one entry per day, exactly as before', () => {
-    const activities: Activity[] = [
-      act({ timestamp: '2026-08-03T09:00:00Z', title: 'first commit' }),
-      act({ timestamp: '2026-08-03T15:00:00Z', title: 'second commit' }),
-    ];
-    const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.group).toBe('');
-    expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
     expect(entries[0]?.end).toBe('2026-08-03T17:00:00Z');
-  });
+  }
+});
+
+it('16. the same issue number in two repos is two groups; a title referencing two issues is its own group', () => {
+  const activities: Activity[] = [
+    act({ repo: 'acme/one', timestamp: '2026-08-03T09:00:00Z', title: 'fix #1' }),
+    act({ repo: 'acme/two', timestamp: '2026-08-03T10:00:00Z', title: 'fix #1' }),
+    act({ repo: 'acme/one', timestamp: '2026-08-03T11:00:00Z', title: 'refs #2 #1' }),
+  ];
+  const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
+  expect(entries.map((e) => e.group)).toEqual(['acme/one#1', 'acme/two#1', 'acme/one#1#2']);
+});
+
+it('17. issueGroupOf / groupLabel / entryKey helpers', () => {
+  expect(issueGroupOf(act({ repo: 'acme/x', title: 'no ref' }))).toBe('');
+  expect(issueGroupOf(act({ repo: 'acme/x', title: 'see #34 and #12' }))).toBe('acme/x#12#34');
+  expect(groupLabel('')).toBe('Other');
+  expect(groupLabel('acme/x#12')).toBe('#12');
+  expect(groupLabel('acme/x#12#34')).toBe('#12 #34');
+  expect(entryKey('2026-08-03', 'acme/x#12')).toBe('2026-08-03|acme/x#12');
+  expect(entryKey('2026-08-03', '')).toBe('2026-08-03|');
+});
+
+it('18. with no issue references at all the output is one entry per day, exactly as before', () => {
+  const activities: Activity[] = [
+    act({ timestamp: '2026-08-03T09:00:00Z', title: 'first commit' }),
+    act({ timestamp: '2026-08-03T15:00:00Z', title: 'second commit' }),
+  ];
+  const { entries } = aggregate(activities, baseSettings({ timezone: 'UTC' }));
+  expect(entries).toHaveLength(1);
+  expect(entries[0]?.group).toBe('');
+  expect(entries[0]?.start).toBe('2026-08-03T09:00:00Z');
+  expect(entries[0]?.end).toBe('2026-08-03T17:00:00Z');
+});
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -491,15 +492,15 @@ export function issueNumbersIn(title: string): number[] {
 In `describeDay`, replace
 
 ```ts
-      for (const match of item.title.matchAll(ISSUE_REF)) {
-        issueNumbers.add(Number(match[1]));
-      }
+for (const match of item.title.matchAll(ISSUE_REF)) {
+  issueNumbers.add(Number(match[1]));
+}
 ```
 
 with
 
 ```ts
-      for (const n of issueNumbersIn(item.title)) issueNumbers.add(n);
+for (const n of issueNumbersIn(item.title)) issueNumbers.add(n);
 ```
 
 - [ ] **Step 5: Rewrite `src/aggregate.ts`**
@@ -699,16 +700,16 @@ export function aggregate(
 In `src/routes/apply.ts`, in `readEntry` right after the `entry.repos` check and before the `return`, add:
 
 ```ts
-  if (typeof e.group !== 'string' || e.group.length > 300) {
-    throw new AppError(
-      400,
-      'invalid_request',
-      'entry.group must be a string of at most 300 characters',
-    );
-  }
-  if (typeof e.key !== 'string' || e.key !== `${e.date}|${e.group}`) {
-    throw new AppError(400, 'invalid_request', 'entry.key must equal `${date}|${group}`');
-  }
+if (typeof e.group !== 'string' || e.group.length > 300) {
+  throw new AppError(
+    400,
+    'invalid_request',
+    'entry.group must be a string of at most 300 characters',
+  );
+}
+if (typeof e.key !== 'string' || e.key !== `${e.date}|${e.group}`) {
+  throw new AppError(400, 'invalid_request', 'entry.key must equal `${date}|${group}`');
+}
 ```
 
 and add `key: e.key, group: e.group,` to the returned object (after `date: e.date,`). In the same file add `key: entry.key,` to every `results.push({ date: entry.date, ... })` object — there are seven (`skipped`, `created`, recheck-failed, recheck-landed, recheck-not-landed, `AppError`, unexpected).
@@ -716,18 +717,18 @@ and add `key: e.key, group: e.group,` to the returned object (after `date: e.dat
 In `client/app.ts` `runImport`, the `proposed` mapping becomes:
 
 ```ts
-    const proposed: ProposedEntry[] = batch.map((e) => ({
-      date: e.date,
-      key: e.key,
-      group: e.group,
-      start: e.start,
-      end: e.end,
-      description: e.description,
-      billable: e.billable,
-      projectId: e.projectId,
-      activityCount: e.activityCount,
-      repos: e.repos,
-    }));
+const proposed: ProposedEntry[] = batch.map((e) => ({
+  date: e.date,
+  key: e.key,
+  group: e.group,
+  start: e.start,
+  end: e.end,
+  description: e.description,
+  billable: e.billable,
+  projectId: e.projectId,
+  activityCount: e.activityCount,
+  repos: e.repos,
+}));
 ```
 
 In `test/plan.test.ts`, `proposed()` gains `key: '2026-08-03|acme/demo#1', group: 'acme/demo#1',` (after `date`). In `test/routes-apply.test.ts`, `ENTRY_1` gains `key: '2026-08-01|', group: '',` and `ENTRY_2` gains `key: '2026-08-02|', group: '',` (after `date`); in test 3, the generated entries must also set `key: \`2026-08-${...}|\`` so the 400 comes from the count and not from a key mismatch — rewrite the map callback as:
@@ -760,11 +761,13 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 3: Write route — same-day siblings are not duplicates
 
 **Files:**
+
 - Modify: `src/plan.ts` (add `findLanded`, `overflowingDates`)
 - Modify: `src/routes/apply.ts` (`MAX_ENTRIES`, `writtenStarts`, `recheckLanded`)
 - Modify: `test/plan.test.ts`, `test/routes-apply.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ProposedEntry.key`/`group` (Task 2).
 - Produces:
   - `findLanded(entry: ProposedEntry, existing: ExistingEntry[]): ExistingEntry | undefined`
@@ -774,248 +777,254 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - [ ] **Step 1: Write the failing pure tests** (append to `describe('buildPlan', ...)` in `test/plan.test.ts`, importing `findLanded` and `overflowingDates`)
 
 ```ts
-  it('13. findLanded matches on project and the exact start instant, not the day', () => {
-    const sibling = existing({ id: 'sibling', start: '2026-08-03T09:00:00Z' });
-    const mine = existing({ id: 'mine', start: '2026-08-03T13:00:00Z' });
-    const second = proposed({ start: '2026-08-03T13:00:00Z', end: '2026-08-03T17:00:00Z' });
-    expect(findLanded(second, [sibling])).toBeUndefined();
-    expect(findLanded(second, [sibling, mine])).toEqual(mine);
-    // A different project at the same instant is not it.
-    expect(findLanded(second, [existing({ id: 'p2', start: mine.start, projectId: 'proj2' })]))
-      .toBeUndefined();
-    // Millisecond formatting differences do not matter — instants compare.
-    expect(findLanded(second, [existing({ id: 'ms', start: '2026-08-03T13:00:00.000Z' })])).toEqual(
-      existing({ id: 'ms', start: '2026-08-03T13:00:00.000Z' }),
-    );
-  });
+it('13. findLanded matches on project and the exact start instant, not the day', () => {
+  const sibling = existing({ id: 'sibling', start: '2026-08-03T09:00:00Z' });
+  const mine = existing({ id: 'mine', start: '2026-08-03T13:00:00Z' });
+  const second = proposed({ start: '2026-08-03T13:00:00Z', end: '2026-08-03T17:00:00Z' });
+  expect(findLanded(second, [sibling])).toBeUndefined();
+  expect(findLanded(second, [sibling, mine])).toEqual(mine);
+  // A different project at the same instant is not it.
+  expect(
+    findLanded(second, [existing({ id: 'p2', start: mine.start, projectId: 'proj2' })]),
+  ).toBeUndefined();
+  // Millisecond formatting differences do not matter — instants compare.
+  expect(findLanded(second, [existing({ id: 'ms', start: '2026-08-03T13:00:00.000Z' })])).toEqual(
+    existing({ id: 'ms', start: '2026-08-03T13:00:00.000Z' }),
+  );
+});
 
-  it('14. overflowingDates lists days where an entry starts on a different local day than its date', () => {
-    const fine = proposed({ date: '2026-08-03', start: '2026-08-03T09:00:00Z' });
-    const spilled = proposed({
-      date: '2026-08-04',
-      key: '2026-08-04|acme/demo#2',
-      start: '2026-08-05T01:00:00Z',
-      end: '2026-08-05T03:00:00Z',
-    });
-    expect(overflowingDates([fine], 'UTC')).toEqual([]);
-    expect(overflowingDates([fine, spilled], 'UTC')).toEqual(['2026-08-04']);
-    // Under Europe/Warsaw (UTC+2 in August) 2026-08-05T01:00Z is still 03:00
-    // on the 5th — still overflowing the 4th.
-    expect(overflowingDates([spilled], 'Europe/Warsaw')).toEqual(['2026-08-04']);
-    // 2026-08-04T22:30Z is 00:30 on the 5th in Warsaw: overflow there, fine in UTC.
-    const edge = proposed({ date: '2026-08-04', key: '2026-08-04|', start: '2026-08-04T22:30:00Z' });
-    expect(overflowingDates([edge], 'Europe/Warsaw')).toEqual(['2026-08-04']);
-    expect(overflowingDates([edge], 'UTC')).toEqual([]);
+it('14. overflowingDates lists days where an entry starts on a different local day than its date', () => {
+  const fine = proposed({ date: '2026-08-03', start: '2026-08-03T09:00:00Z' });
+  const spilled = proposed({
+    date: '2026-08-04',
+    key: '2026-08-04|acme/demo#2',
+    start: '2026-08-05T01:00:00Z',
+    end: '2026-08-05T03:00:00Z',
   });
+  expect(overflowingDates([fine], 'UTC')).toEqual([]);
+  expect(overflowingDates([fine, spilled], 'UTC')).toEqual(['2026-08-04']);
+  // Under Europe/Warsaw (UTC+2 in August) 2026-08-05T01:00Z is still 03:00
+  // on the 5th — still overflowing the 4th.
+  expect(overflowingDates([spilled], 'Europe/Warsaw')).toEqual(['2026-08-04']);
+  // 2026-08-04T22:30Z is 00:30 on the 5th in Warsaw: overflow there, fine in UTC.
+  const edge = proposed({ date: '2026-08-04', key: '2026-08-04|', start: '2026-08-04T22:30:00Z' });
+  expect(overflowingDates([edge], 'Europe/Warsaw')).toEqual(['2026-08-04']);
+  expect(overflowingDates([edge], 'UTC')).toEqual([]);
+});
 ```
 
 - [ ] **Step 2: Write the failing route tests** (append to `describe('apply route', ...)` in `test/routes-apply.test.ts`)
 
 ```ts
-  it('15. two entries on the same day (one per issue) are both written — the second is not a duplicate of the first', async () => {
-    let createCount = 0;
-    vi.stubGlobal(
-      'fetch',
-      routedFetch([
-        userHandler(UID),
-        emptyListHandler(),
-        {
-          test: isCreateEntry,
-          respond: () => {
-            createCount += 1;
-            return jsonResponse({ id: `new-${createCount}` });
-          },
-        },
-      ]),
-    );
-    const first = {
-      ...ENTRY_1,
-      key: '2026-08-01|acme/repo#1',
-      group: 'acme/repo#1',
-      start: '2026-08-01T09:00:00Z',
-      end: '2026-08-01T13:00:00Z',
-    };
-    const second = {
-      ...ENTRY_1,
-      key: '2026-08-01|acme/repo#2',
-      group: 'acme/repo#2',
-      start: '2026-08-01T13:00:00Z',
-      end: '2026-08-01T17:00:00Z',
-    };
-
-    const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
-
-    expect(res.status).toBe(200);
-    const body = await res.json<{ results: ApplyResult[] }>();
-    expect(body.results).toEqual([
-      { date: '2026-08-01', key: first.key, ok: true, entryId: 'new-1' },
-      { date: '2026-08-01', key: second.key, ok: true, entryId: 'new-2' },
-    ]);
-    expect(createCount).toBe(2);
-  });
-
-  it('16. an exact repeat within one batch (same project and start) is still skipped after the first write', async () => {
-    let createCount = 0;
-    vi.stubGlobal(
-      'fetch',
-      routedFetch([
-        userHandler(UID),
-        emptyListHandler(),
-        {
-          test: isCreateEntry,
-          respond: () => {
-            createCount += 1;
-            return jsonResponse({ id: `new-${createCount}` });
-          },
-        },
-      ]),
-    );
-
-    const res = await post('/api/apply', { ...VALID_BODY, entries: [ENTRY_1, ENTRY_1] });
-
-    expect(res.status).toBe(200);
-    const body = await res.json<{ results: ApplyResult[] }>();
-    expect(body.results).toEqual([
-      { date: '2026-08-01', key: ENTRY_1.key, ok: true, entryId: 'new-1' },
-      { date: '2026-08-01', key: ENTRY_1.key, ok: true, skipped: true, error: 'Already exists' },
-    ]);
-    expect(createCount).toBe(1);
-  });
-
-  it('17. an existing entry on the day still marks every entry of that day as a duplicate — the day-level rule is unchanged', async () => {
-    const fetchMock = routedFetch([
+it('15. two entries on the same day (one per issue) are both written — the second is not a duplicate of the first', async () => {
+  let createCount = 0;
+  vi.stubGlobal(
+    'fetch',
+    routedFetch([
       userHandler(UID),
-      existingEntryHandler('2026-08-01T07:00:00Z'),
-      { test: isCreateEntry, respond: () => jsonResponse({ id: 'should-not-happen' }) },
-    ]);
-    vi.stubGlobal('fetch', fetchMock);
-    const first = { ...ENTRY_1, key: '2026-08-01|acme/repo#1', group: 'acme/repo#1' };
-    const second = {
-      ...ENTRY_1,
-      key: '2026-08-01|acme/repo#2',
-      group: 'acme/repo#2',
-      start: '2026-08-01T17:00:00Z',
-      end: '2026-08-01T18:00:00Z',
-    };
-
-    const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
-
-    expect(res.status).toBe(200);
-    const body = await res.json<{ results: ApplyResult[] }>();
-    expect(body.results.map((r) => r.skipped)).toEqual([true, true]);
-    const postCalls = fetchMock.mock.calls.filter(
-      ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
-    );
-    expect(postCalls).toHaveLength(0);
-  });
-
-  it('18. the recheck after an ambiguous failure looks for THIS entry\'s start, not merely any entry on the day', async () => {
-    // Entry 1 (09:00) is written fine. Entry 2 (13:00) 500s; the recheck
-    // list shows only entry 1 — so entry 2 did NOT land and must be
-    // reported as a failure, not as "Already exists".
-    let listCalls = 0;
-    let createCalls = 0;
-    vi.stubGlobal(
-      'fetch',
-      routedFetch([
-        userHandler(UID),
-        {
-          test: isListEntries,
-          respond: () => {
-            listCalls += 1;
-            if (listCalls === 1) return jsonResponse([], { headers: { 'Last-Page': 'true' } });
-            return jsonResponse(
-              [
-                {
-                  id: 'new-1',
-                  timeInterval: { start: '2026-08-01T09:00:00Z', end: '2026-08-01T13:00:00Z' },
-                  description: 'x',
-                  projectId: PROJECT_ID,
-                },
-              ],
-              { headers: { 'Last-Page': 'true' } },
-            );
-          },
+      emptyListHandler(),
+      {
+        test: isCreateEntry,
+        respond: () => {
+          createCount += 1;
+          return jsonResponse({ id: `new-${createCount}` });
         },
-        {
-          test: isCreateEntry,
-          respond: () => {
-            createCalls += 1;
-            return createCalls === 1 ? jsonResponse({ id: 'new-1' }) : errorResponse(500);
-          },
+      },
+    ]),
+  );
+  const first = {
+    ...ENTRY_1,
+    key: '2026-08-01|acme/repo#1',
+    group: 'acme/repo#1',
+    start: '2026-08-01T09:00:00Z',
+    end: '2026-08-01T13:00:00Z',
+  };
+  const second = {
+    ...ENTRY_1,
+    key: '2026-08-01|acme/repo#2',
+    group: 'acme/repo#2',
+    start: '2026-08-01T13:00:00Z',
+    end: '2026-08-01T17:00:00Z',
+  };
+
+  const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
+
+  expect(res.status).toBe(200);
+  const body = await res.json<{ results: ApplyResult[] }>();
+  expect(body.results).toEqual([
+    { date: '2026-08-01', key: first.key, ok: true, entryId: 'new-1' },
+    { date: '2026-08-01', key: second.key, ok: true, entryId: 'new-2' },
+  ]);
+  expect(createCount).toBe(2);
+});
+
+it('16. an exact repeat within one batch (same project and start) is still skipped after the first write', async () => {
+  let createCount = 0;
+  vi.stubGlobal(
+    'fetch',
+    routedFetch([
+      userHandler(UID),
+      emptyListHandler(),
+      {
+        test: isCreateEntry,
+        respond: () => {
+          createCount += 1;
+          return jsonResponse({ id: `new-${createCount}` });
         },
-      ]),
-    );
-    const first = {
-      ...ENTRY_1,
-      key: '2026-08-01|acme/repo#1',
-      group: 'acme/repo#1',
-      end: '2026-08-01T13:00:00Z',
-    };
-    const second = {
-      ...ENTRY_1,
-      key: '2026-08-01|acme/repo#2',
-      group: 'acme/repo#2',
-      start: '2026-08-01T13:00:00Z',
-      end: '2026-08-01T17:00:00Z',
-    };
+      },
+    ]),
+  );
 
-    const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
+  const res = await post('/api/apply', { ...VALID_BODY, entries: [ENTRY_1, ENTRY_1] });
 
-    expect(res.status).toBe(200);
-    const body = await res.json<{ results: ApplyResult[] }>();
-    expect(body.results[0]).toEqual({ date: '2026-08-01', key: first.key, ok: true, entryId: 'new-1' });
-    expect(body.results[1]).toEqual(expect.objectContaining({ key: second.key, ok: false }));
-    expect(body.results[1]?.skipped).toBeUndefined();
-    expect(listCalls).toBe(2);
-  });
+  expect(res.status).toBe(200);
+  const body = await res.json<{ results: ApplyResult[] }>();
+  expect(body.results).toEqual([
+    { date: '2026-08-01', key: ENTRY_1.key, ok: true, entryId: 'new-1' },
+    { date: '2026-08-01', key: ENTRY_1.key, ok: true, skipped: true, error: 'Already exists' },
+  ]);
+  expect(createCount).toBe(1);
+});
 
-  it('19. a key that does not equal `${date}|${group}` is rejected 400 with no fetch', async () => {
-    const fetchMock = neverCalledFetch();
-    vi.stubGlobal('fetch', fetchMock);
+it('17. an existing entry on the day still marks every entry of that day as a duplicate — the day-level rule is unchanged', async () => {
+  const fetchMock = routedFetch([
+    userHandler(UID),
+    existingEntryHandler('2026-08-01T07:00:00Z'),
+    { test: isCreateEntry, respond: () => jsonResponse({ id: 'should-not-happen' }) },
+  ]);
+  vi.stubGlobal('fetch', fetchMock);
+  const first = { ...ENTRY_1, key: '2026-08-01|acme/repo#1', group: 'acme/repo#1' };
+  const second = {
+    ...ENTRY_1,
+    key: '2026-08-01|acme/repo#2',
+    group: 'acme/repo#2',
+    start: '2026-08-01T17:00:00Z',
+    end: '2026-08-01T18:00:00Z',
+  };
 
-    const res = await post('/api/apply', {
-      ...VALID_BODY,
-      entries: [{ ...ENTRY_1, key: '2026-08-01|acme/repo#9', group: '' }],
-    });
+  const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
 
-    expect(res.status).toBe(400);
-    expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
+  expect(res.status).toBe(200);
+  const body = await res.json<{ results: ApplyResult[] }>();
+  expect(body.results.map((r) => r.skipped)).toEqual([true, true]);
+  const postCalls = fetchMock.mock.calls.filter(
+    ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
+  );
+  expect(postCalls).toHaveLength(0);
+});
 
-  it('20. ten entries are accepted (the cap holds a whole day of per-issue entries)', async () => {
-    let createCount = 0;
-    vi.stubGlobal(
-      'fetch',
-      routedFetch([
-        userHandler(UID),
-        emptyListHandler(),
-        {
-          test: isCreateEntry,
-          respond: () => {
-            createCount += 1;
-            return jsonResponse({ id: `new-${createCount}` });
-          },
+it("18. the recheck after an ambiguous failure looks for THIS entry's start, not merely any entry on the day", async () => {
+  // Entry 1 (09:00) is written fine. Entry 2 (13:00) 500s; the recheck
+  // list shows only entry 1 — so entry 2 did NOT land and must be
+  // reported as a failure, not as "Already exists".
+  let listCalls = 0;
+  let createCalls = 0;
+  vi.stubGlobal(
+    'fetch',
+    routedFetch([
+      userHandler(UID),
+      {
+        test: isListEntries,
+        respond: () => {
+          listCalls += 1;
+          if (listCalls === 1) return jsonResponse([], { headers: { 'Last-Page': 'true' } });
+          return jsonResponse(
+            [
+              {
+                id: 'new-1',
+                timeInterval: { start: '2026-08-01T09:00:00Z', end: '2026-08-01T13:00:00Z' },
+                description: 'x',
+                projectId: PROJECT_ID,
+              },
+            ],
+            { headers: { 'Last-Page': 'true' } },
+          );
         },
-      ]),
-    );
-    const entries = Array.from({ length: 10 }, (_, i) => {
-      const hh = String(9 + i).padStart(2, '0');
-      return {
-        ...ENTRY_1,
-        key: `2026-08-01|acme/repo#${i + 1}`,
-        group: `acme/repo#${i + 1}`,
-        start: `2026-08-01T${hh}:00:00Z`,
-        end: `2026-08-01T${hh}:30:00Z`,
-      };
-    });
+      },
+      {
+        test: isCreateEntry,
+        respond: () => {
+          createCalls += 1;
+          return createCalls === 1 ? jsonResponse({ id: 'new-1' }) : errorResponse(500);
+        },
+      },
+    ]),
+  );
+  const first = {
+    ...ENTRY_1,
+    key: '2026-08-01|acme/repo#1',
+    group: 'acme/repo#1',
+    end: '2026-08-01T13:00:00Z',
+  };
+  const second = {
+    ...ENTRY_1,
+    key: '2026-08-01|acme/repo#2',
+    group: 'acme/repo#2',
+    start: '2026-08-01T13:00:00Z',
+    end: '2026-08-01T17:00:00Z',
+  };
 
-    const res = await post('/api/apply', { ...VALID_BODY, entries });
+  const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
 
-    expect(res.status).toBe(200);
-    expect(createCount).toBe(10);
+  expect(res.status).toBe(200);
+  const body = await res.json<{ results: ApplyResult[] }>();
+  expect(body.results[0]).toEqual({
+    date: '2026-08-01',
+    key: first.key,
+    ok: true,
+    entryId: 'new-1',
   });
+  expect(body.results[1]).toEqual(expect.objectContaining({ key: second.key, ok: false }));
+  expect(body.results[1]?.skipped).toBeUndefined();
+  expect(listCalls).toBe(2);
+});
+
+it('19. a key that does not equal `${date}|${group}` is rejected 400 with no fetch', async () => {
+  const fetchMock = neverCalledFetch();
+  vi.stubGlobal('fetch', fetchMock);
+
+  const res = await post('/api/apply', {
+    ...VALID_BODY,
+    entries: [{ ...ENTRY_1, key: '2026-08-01|acme/repo#9', group: '' }],
+  });
+
+  expect(res.status).toBe(400);
+  expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('20. ten entries are accepted (the cap holds a whole day of per-issue entries)', async () => {
+  let createCount = 0;
+  vi.stubGlobal(
+    'fetch',
+    routedFetch([
+      userHandler(UID),
+      emptyListHandler(),
+      {
+        test: isCreateEntry,
+        respond: () => {
+          createCount += 1;
+          return jsonResponse({ id: `new-${createCount}` });
+        },
+      },
+    ]),
+  );
+  const entries = Array.from({ length: 10 }, (_, i) => {
+    const hh = String(9 + i).padStart(2, '0');
+    return {
+      ...ENTRY_1,
+      key: `2026-08-01|acme/repo#${i + 1}`,
+      group: `acme/repo#${i + 1}`,
+      start: `2026-08-01T${hh}:00:00Z`,
+      end: `2026-08-01T${hh}:30:00Z`,
+    };
+  });
+
+  const res = await post('/api/apply', { ...VALID_BODY, entries });
+
+  expect(res.status).toBe(200);
+  expect(createCount).toBe(10);
+});
 ```
 
 - [ ] **Step 3: Run to verify they fail**
@@ -1040,8 +1049,7 @@ export function findLanded(
 ): ExistingEntry | undefined {
   const start = Date.parse(entry.start);
   return existing.find(
-    (candidate) =>
-      candidate.projectId === entry.projectId && Date.parse(candidate.start) === start,
+    (candidate) => candidate.projectId === entry.projectId && Date.parse(candidate.start) === start,
   );
 }
 
@@ -1083,30 +1091,36 @@ In `recheckLanded`, replace `return findDuplicate(entry, fresh, timezone) !== un
 In the handler, before the `for (const entry of entries)` loop, add:
 
 ```ts
-  // Entries written in THIS batch, keyed `${projectId}@${start}`. They are
-  // deliberately not pushed into `existing`: that list drives the day-level
-  // check, and a day now legitimately holds several entries (one per
-  // issue), so a sibling written moments ago must not turn the rest of its
-  // day into duplicates. An exact repeat (same project, same start) is
-  // still caught here — the belt-and-braces this route keeps against a
-  // client that sends the same entry twice.
-  const writtenStarts = new Set<string>();
-  const startKey = (entry: ProposedEntry) => `${entry.projectId}@${entry.start}`;
+// Entries written in THIS batch, keyed `${projectId}@${start}`. They are
+// deliberately not pushed into `existing`: that list drives the day-level
+// check, and a day now legitimately holds several entries (one per
+// issue), so a sibling written moments ago must not turn the rest of its
+// day into duplicates. An exact repeat (same project, same start) is
+// still caught here — the belt-and-braces this route keeps against a
+// client that sends the same entry twice.
+const writtenStarts = new Set<string>();
+const startKey = (entry: ProposedEntry) => `${entry.projectId}@${entry.start}`;
 ```
 
 Replace the duplicate check at the top of the loop with:
 
 ```ts
-    if (findDuplicate(entry, existing, timezone) || writtenStarts.has(startKey(entry))) {
-      results.push({ date: entry.date, key: entry.key, ok: true, skipped: true, error: 'Already exists' });
-      continue;
-    }
+if (findDuplicate(entry, existing, timezone) || writtenStarts.has(startKey(entry))) {
+  results.push({
+    date: entry.date,
+    key: entry.key,
+    ok: true,
+    skipped: true,
+    error: 'Already exists',
+  });
+  continue;
+}
 ```
 
 Replace the `existing.push({...})` block (and its comment) after `createEntry` with:
 
 ```ts
-      writtenStarts.add(startKey(entry));
+writtenStarts.add(startKey(entry));
 ```
 
 In the `recheck.landed` branch, add `writtenStarts.add(startKey(entry));` before its `results.push`.
@@ -1130,12 +1144,14 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 4: Client state, markup and wiring (split option, per-entry selection, manual hours)
 
 **Files:**
+
 - Modify: `client/state.ts`
 - Modify: `public/index.html:395-421`
 - Modify: `client/app.ts`
 - Modify: `client/render.ts` (rename only — `checkedDates` → `checkedKeys`, `data-dateCheckbox` → `data-keyCheckbox`; the visual changes are Task 5)
 
 **Interfaces:**
+
 - Consumes: `aggregate(activities, settings, overrides)`, `HoursOverrides` (Task 2); `batchByDay` (Task 1).
 - Produces (read by Task 5's render):
   - `State['prefs']['splitEvenly']: boolean`
@@ -1146,18 +1162,19 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - [ ] **Step 1: State**
 
 In `client/state.ts`:
+
 - Add `splitEvenly: boolean;` to `Prefs` after `includeWeekends`, and `splitEvenly: true,` to `defaultPrefs()`.
 - Replace `checkedDates: Set<string>;` in `State` with:
 
 ```ts
-  /** `ProposedEntry.key`s selected for import. */
-  checkedKeys: Set<string>;
-  /**
-   * Manual hours per entry key — used only while `prefs.splitEvenly` is
-   * false. Keys that no longer exist in the plan are dropped on recompute;
-   * an entry with no override keeps its even share. Cleared with the scan.
-   */
-  entryHours: Record<string, number>;
+/** `ProposedEntry.key`s selected for import. */
+checkedKeys: Set<string>;
+/**
+ * Manual hours per entry key — used only while `prefs.splitEvenly` is
+ * false. Keys that no longer exist in the plan are dropped on recompute;
+ * an entry with no override keeps its even share. Cleared with the scan.
+ */
+entryHours: Record<string, number>;
 ```
 
 - In `createInitialState()`, replace `checkedDates: new Set(),` with `checkedKeys: new Set(), entryHours: {},`.
@@ -1167,32 +1184,31 @@ In `client/state.ts`:
 In `public/index.html`, immediately before `<div id="preview-table-wrap" ...>`, insert:
 
 ```html
-          <div class="field field-checkbox">
-            <input type="checkbox" id="split-evenly" name="split-evenly" checked />
-            <label for="split-evenly">Split each day's hours evenly across its entries</label>
-            <p class="field-hint">
-              Each GitHub issue gets its own entry. Uncheck to set the hours of every entry by
-              hand.
-            </p>
-          </div>
+<div class="field field-checkbox">
+  <input type="checkbox" id="split-evenly" name="split-evenly" checked />
+  <label for="split-evenly">Split each day's hours evenly across its entries</label>
+  <p class="field-hint">
+    Each GitHub issue gets its own entry. Uncheck to set the hours of every entry by hand.
+  </p>
+</div>
 ```
 
 Change the table caption to `One row per issue per day`. Replace the `<thead>` row with:
 
 ```html
-                <tr>
-                  <th scope="col">
-                    <input type="checkbox" id="preview-select-all" aria-label="Select all entries" />
-                  </th>
-                  <th scope="col">Date</th>
-                  <th scope="col">Day</th>
-                  <th scope="col">Issue</th>
-                  <th scope="col">Activity</th>
-                  <th scope="col">Repositories</th>
-                  <th scope="col">Description</th>
-                  <th scope="col">Hours</th>
-                  <th scope="col">Status</th>
-                </tr>
+<tr>
+  <th scope="col">
+    <input type="checkbox" id="preview-select-all" aria-label="Select all entries" />
+  </th>
+  <th scope="col">Date</th>
+  <th scope="col">Day</th>
+  <th scope="col">Issue</th>
+  <th scope="col">Activity</th>
+  <th scope="col">Repositories</th>
+  <th scope="col">Description</th>
+  <th scope="col">Hours</th>
+  <th scope="col">Status</th>
+</tr>
 ```
 
 Change the placeholder row's `colspan="7"` to `colspan="9"`, and the totals placeholder text to `0 of 0 entries selected &mdash; 0.00 hours`.
@@ -1270,53 +1286,55 @@ function recomputePlan(): void {
 In `invalidateScan`, replace `s.checkedDates = new Set();` with `s.checkedKeys = new Set(); s.entryHours = {};`.
 
 In `runImport`:
+
 - `const checked = s0.plan.entries.filter((e) => s0.checkedKeys.has(e.key));`
 - Refuse to send overflowing days — after the `checked.length === 0` guard add:
 
 ```ts
-  // Mirrors the apply route's own rejection (entry.date must be the local
-  // day of entry.start); render.ts already disables the button in this
-  // state, this is the belt to that brace.
-  if (overflowingDates(checked, s0.prefs.timezone).length > 0) return;
+// Mirrors the apply route's own rejection (entry.date must be the local
+// day of entry.start); render.ts already disables the button in this
+// state, this is the belt to that brace.
+if (overflowingDates(checked, s0.prefs.timezone).length > 0) return;
 ```
 
 - `const batches = batchByDay(checked, APPLY_CHUNK);`
 - In the `catch` fallback that fabricates per-entry failures, include the key: `...batch.map((e) => ({ date: e.date, key: e.key, ok: false, error: message }))`.
 
 In `wirePreviewStep`:
+
 - Select-all: `s.checkedKeys = checked ? new Set(s.plan.entries.map((entry) => entry.key)) : new Set();`
 - Row checkbox: read `target.dataset.keyCheckbox`, mutate `s.checkedKeys` (same shape as before, keyed on `key`).
 - Add the split checkbox listener:
 
 ```ts
-  qs<HTMLInputElement>('split-evenly').addEventListener('change', (e) => {
-    const checked = (e.target as HTMLInputElement).checked;
-    store.update((s) => {
-      s.prefs.splitEvenly = checked;
-    });
-    savePrefs(store.getState().prefs);
-    recomputePlan();
+qs<HTMLInputElement>('split-evenly').addEventListener('change', (e) => {
+  const checked = (e.target as HTMLInputElement).checked;
+  store.update((s) => {
+    s.prefs.splitEvenly = checked;
   });
+  savePrefs(store.getState().prefs);
+  recomputePlan();
+});
 ```
 
 - Add the manual-hours listener, delegated on the rows container. `change`, not `input` — the table is rebuilt on every render, so recomputing per keystroke would steal focus mid-typing:
 
 ```ts
-  qs('preview-rows').addEventListener('change', (e) => {
-    const target = e.target;
-    if (!(target instanceof HTMLInputElement) || !target.dataset.hoursKey) return;
-    const key = target.dataset.hoursKey;
-    const raw = Number(target.value);
-    if (!Number.isFinite(raw) || raw <= 0 || raw > 24) {
-      // Invalid input: re-render restores the last good value.
-      store.update(() => {});
-      return;
-    }
-    store.update((s) => {
-      s.entryHours = { ...s.entryHours, [key]: raw };
-    });
-    recomputePlan();
+qs('preview-rows').addEventListener('change', (e) => {
+  const target = e.target;
+  if (!(target instanceof HTMLInputElement) || !target.dataset.hoursKey) return;
+  const key = target.dataset.hoursKey;
+  const raw = Number(target.value);
+  if (!Number.isFinite(raw) || raw <= 0 || raw > 24) {
+    // Invalid input: re-render restores the last good value.
+    store.update(() => {});
+    return;
+  }
+  store.update((s) => {
+    s.entryHours = { ...s.entryHours, [key]: raw };
   });
+  recomputePlan();
+});
 ```
 
 (This can be the same listener as the checkbox one — branch on `dataset.keyCheckbox` vs `dataset.hoursKey` — or a second `addEventListener('change', ...)` on the same element; either is fine.)
@@ -1342,10 +1360,12 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 5: Preview rendering — issue column, hours column with inputs, totals
 
 **Files:**
+
 - Modify: `client/render.ts` (`renderPreviewTable`, `renderImportResults`)
 - Modify: `public/style.css`
 
 **Interfaces:**
+
 - Consumes: `State.checkedKeys`, `State.entryHours`, `State.prefs.splitEvenly`, `#split-evenly` (Task 4); `groupLabel` (Task 2); `overflowingDates` (Task 3).
 
 - [ ] **Step 1: CSS** — append to `public/style.css` after the `.totals` rule:
@@ -1380,47 +1400,47 @@ function hoursOf(entry: PlannedEntry): number {
 Inside the `for (const entry of plan.entries)` loop, after the `dayTd` and before the `activityTd`, insert the issue cell:
 
 ```ts
-    const issueTd = document.createElement('td');
-    issueTd.textContent = groupLabel(entry.group);
-    tr.appendChild(issueTd);
+const issueTd = document.createElement('td');
+issueTd.textContent = groupLabel(entry.group);
+tr.appendChild(issueTd);
 ```
 
 After the `descTd` and before the `statusTd`, insert the hours cell:
 
 ```ts
-    const hoursTd = document.createElement('td');
-    hoursTd.className = 'hours-cell';
-    if (state.prefs.splitEvenly) {
-      hoursTd.textContent = hoursOf(entry).toFixed(2);
-    } else {
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.className = 'hours-input';
-      input.min = '0.25';
-      input.max = '24';
-      input.step = '0.25';
-      input.value = hoursOf(entry).toFixed(2);
-      input.dataset.hoursKey = entry.key;
-      input.setAttribute('aria-label', `Hours for ${entry.date} ${groupLabel(entry.group)}`);
-      hoursTd.appendChild(input);
-    }
-    tr.appendChild(hoursTd);
+const hoursTd = document.createElement('td');
+hoursTd.className = 'hours-cell';
+if (state.prefs.splitEvenly) {
+  hoursTd.textContent = hoursOf(entry).toFixed(2);
+} else {
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.className = 'hours-input';
+  input.min = '0.25';
+  input.max = '24';
+  input.step = '0.25';
+  input.value = hoursOf(entry).toFixed(2);
+  input.dataset.hoursKey = entry.key;
+  input.setAttribute('aria-label', `Hours for ${entry.date} ${groupLabel(entry.group)}`);
+  hoursTd.appendChild(input);
+}
+tr.appendChild(hoursTd);
 ```
 
 Replace the totals computation and text with:
 
 ```ts
-  const selected = plan.entries.filter((e) => state.checkedKeys.has(e.key));
-  const selectedCount = selected.length;
-  const selectedHours = selected.reduce((sum, e) => sum + hoursOf(e), 0);
-  const overflow = overflowingDates(selected, state.prefs.timezone);
-  if (overflow.length > 0) {
-    totals.classList.add('is-error');
-    totals.textContent = `Entries on ${overflow.join(', ')} run past midnight — reduce their hours before importing.`;
-  } else {
-    totals.classList.remove('is-error');
-    totals.textContent = `${selectedCount} of ${plan.entries.length} entries selected — ${selectedHours.toFixed(2)} hours`;
-  }
+const selected = plan.entries.filter((e) => state.checkedKeys.has(e.key));
+const selectedCount = selected.length;
+const selectedHours = selected.reduce((sum, e) => sum + hoursOf(e), 0);
+const overflow = overflowingDates(selected, state.prefs.timezone);
+if (overflow.length > 0) {
+  totals.classList.add('is-error');
+  totals.textContent = `Entries on ${overflow.join(', ')} run past midnight — reduce their hours before importing.`;
+} else {
+  totals.classList.remove('is-error');
+  totals.textContent = `${selectedCount} of ${plan.entries.length} entries selected — ${selectedHours.toFixed(2)} hours`;
+}
 ```
 
 And in the import button branch: `importBtn.disabled = selectedCount === 0 || overflow.length > 0;`.
@@ -1430,9 +1450,9 @@ Also in this function, keep `(el('split-evenly') as HTMLInputElement).checked = 
 - [ ] **Step 3: `renderImportResults`** — show which entry a result is for. Replace `li.appendChild(document.createTextNode(\` ${result.date}\`));` with:
 
 ```ts
-    const entry = state.plan?.entries.find((e) => e.key === result.key);
-    const label = entry ? `${result.date} · ${groupLabel(entry.group)}` : result.date;
-    li.appendChild(document.createTextNode(` ${label}`));
+const entry = state.plan?.entries.find((e) => e.key === result.key);
+const label = entry ? `${result.date} · ${groupLabel(entry.group)}` : result.date;
+li.appendChild(document.createTextNode(` ${label}`));
 ```
 
 - [ ] **Step 4: Build and run CI**
@@ -1462,6 +1482,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 6: README
 
 **Files:**
+
 - Modify: `README.md` (intro paragraph, "Three honest limitations" duplicate paragraph, "Architecture, briefly")
 
 - [ ] **Step 1: Intro** — in the first paragraph, after "You pick a date range and a scope, preview exactly what will be written (including what already exists, so re-running a range is safe), and import." add:
