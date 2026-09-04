@@ -1039,19 +1039,26 @@ function wirePreviewStep(): void {
     if (target instanceof HTMLInputElement && target.dataset.hoursKey) {
       const key = target.dataset.hoursKey;
       const raw = Number(target.value);
-      if (!Number.isFinite(raw) || raw <= 0 || raw > 24) {
-        // Invalid input: re-render restores the last good value.
-        store.update(() => {});
-        return;
-      }
-      // Round to what's actually displayed (2 decimal places, same as the
-      // input's toFixed(2) rendering) so the totals shown always agree with
-      // what's stored.
-      const value = Math.round(raw * 100) / 100;
-      store.update((s) => {
-        s.entryHours = { ...s.entryHours, [key]: value };
-      });
-      recomputePlan();
+      // Deferred to a macrotask: `change` fires before the browser finishes
+      // moving focus on Tab/click-away, and rebuilding the table synchronously
+      // would destroy the element focus is about to land on. After a 0ms
+      // timeout the transfer has settled, so renderPreviewTable's focus
+      // capture/restore sees (and keeps) the right input.
+      setTimeout(() => {
+        if (!Number.isFinite(raw) || raw <= 0 || raw > 24) {
+          // Invalid input: re-render restores the last good value.
+          store.update(() => {});
+          return;
+        }
+        // Round to what's actually displayed (2 decimal places, same as the
+        // input's toFixed(2) rendering) so the totals shown always agree with
+        // what's stored.
+        const value = Math.round(raw * 100) / 100;
+        store.update((s) => {
+          s.entryHours = { ...s.entryHours, [key]: value };
+        });
+        recomputePlan();
+      }, 0);
     }
   });
 
