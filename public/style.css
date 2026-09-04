@@ -614,6 +614,21 @@ tbody tr.is-duplicate td:not(:first-child) {
   margin: 0 0 1rem;
 }
 
+.totals.is-error {
+  color: var(--color-danger);
+}
+
+.hours-input {
+  width: 5.5rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.9rem;
+}
+
+td.hours-cell {
+  white-space: nowrap;
+  text-align: right;
+}
+
 /* Footer */
 
 .site-footer {

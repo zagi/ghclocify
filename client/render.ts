@@ -12,6 +12,7 @@
  * rule.
  */
 import { groupLabel } from '../src/aggregate';
+import { overflowingDates } from '../src/plan';
 import type { PlannedEntry } from '../src/types';
 import type { State } from './state';
 
@@ -375,6 +376,10 @@ function statusPill(status: PlannedEntry['status']): HTMLElement {
   return span;
 }
 
+function hoursOf(entry: PlannedEntry): number {
+  return (Date.parse(entry.end) - Date.parse(entry.start)) / 3_600_000;
+}
+
 export function renderPreviewTable(state: State): void {
   const wrap = el('preview-table-wrap');
   const totals = el('preview-totals');
@@ -391,6 +396,8 @@ export function renderPreviewTable(state: State): void {
     (el('import-btn') as HTMLButtonElement).textContent = 'Import entries';
     return;
   }
+
+  (el('split-evenly') as HTMLInputElement).checked = state.prefs.splitEvenly;
 
   wrap.hidden = false;
   rowsEl.innerHTML = '';
@@ -433,6 +440,10 @@ export function renderPreviewTable(state: State): void {
     dayTd.textContent = weekdayLabel(entry.date);
     tr.appendChild(dayTd);
 
+    const issueTd = document.createElement('td');
+    issueTd.textContent = groupLabel(entry.group);
+    tr.appendChild(issueTd);
+
     const activityTd = document.createElement('td');
     activityTd.textContent = `${entry.activityCount} ${entry.activityCount === 1 ? 'activity' : 'activities'}`;
     tr.appendChild(activityTd);
@@ -444,6 +455,24 @@ export function renderPreviewTable(state: State): void {
     const descTd = document.createElement('td');
     descTd.textContent = entry.description;
     tr.appendChild(descTd);
+
+    const hoursTd = document.createElement('td');
+    hoursTd.className = 'hours-cell';
+    if (state.prefs.splitEvenly) {
+      hoursTd.textContent = hoursOf(entry).toFixed(2);
+    } else {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'hours-input';
+      input.min = '0.25';
+      input.max = '24';
+      input.step = '0.25';
+      input.value = hoursOf(entry).toFixed(2);
+      input.dataset.hoursKey = entry.key;
+      input.setAttribute('aria-label', `Hours for ${entry.date} ${groupLabel(entry.group)}`);
+      hoursTd.appendChild(input);
+    }
+    tr.appendChild(hoursTd);
 
     const statusTd = document.createElement('td');
     statusTd.appendChild(statusPill(entry.status));
@@ -458,11 +487,17 @@ export function renderPreviewTable(state: State): void {
     rowsEl.appendChild(tr);
   }
 
-  const selectedCount = plan.entries.filter((e) => state.checkedKeys.has(e.key)).length;
-  const selectedHours = plan.entries
-    .filter((e) => state.checkedKeys.has(e.key))
-    .reduce((sum, e) => sum + (Date.parse(e.end) - Date.parse(e.start)) / 3_600_000, 0);
-  totals.textContent = `${selectedCount} of ${plan.entries.length} days selected — ${selectedHours.toFixed(2)} hours`;
+  const selected = plan.entries.filter((e) => state.checkedKeys.has(e.key));
+  const selectedCount = selected.length;
+  const selectedHours = selected.reduce((sum, e) => sum + hoursOf(e), 0);
+  const overflow = overflowingDates(selected, state.prefs.timezone);
+  if (overflow.length > 0) {
+    totals.classList.add('is-error');
+    totals.textContent = `Entries on ${overflow.join(', ')} run past midnight — reduce their hours before importing.`;
+  } else {
+    totals.classList.remove('is-error');
+    totals.textContent = `${selectedCount} of ${plan.entries.length} entries selected — ${selectedHours.toFixed(2)} hours`;
+  }
 
   selectAll.checked = selectedCount > 0 && selectedCount === plan.entries.length;
   selectAll.indeterminate = selectedCount > 0 && selectedCount < plan.entries.length;
@@ -475,7 +510,7 @@ export function renderPreviewTable(state: State): void {
     importBtn.disabled = false;
     importBtn.textContent = `Stop (${state.importing.completed} of ${state.importing.total} imported)`;
   } else {
-    importBtn.disabled = selectedCount === 0;
+    importBtn.disabled = selectedCount === 0 || overflow.length > 0;
     importBtn.textContent = 'Import entries';
   }
 
@@ -512,7 +547,9 @@ export function renderImportResults(state: State): void {
       pill.textContent = 'Failed';
     }
     li.appendChild(pill);
-    li.appendChild(document.createTextNode(` ${result.date}`));
+    const entry = state.plan?.entries.find((e) => e.key === result.key);
+    const label = entry ? `${result.date} · ${groupLabel(entry.group)}` : result.date;
+    li.appendChild(document.createTextNode(` ${label}`));
     if (!result.ok && result.error) {
       const detail = document.createElement('div');
       detail.className = 'field-hint';
