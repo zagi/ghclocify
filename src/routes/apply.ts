@@ -16,7 +16,7 @@ import { AppError } from '../problems';
 import { isClockifyHost, isClockifyId, isDateKey } from '../validate';
 import { isValidTimezone, localDayOf, toClockifyIso } from '../timezone';
 import { baseUrl, createEntry, getUser, listEntries } from '../clockify';
-import { findDuplicate } from '../plan';
+import { findDuplicate, findLanded } from '../plan';
 import { CLOCKIFY_MAX_DESCRIPTION } from '../describe';
 import type { ApplyResult, ProposedEntry } from '../types';
 
@@ -24,9 +24,13 @@ export const applyRoutes = new Hono<{ Bindings: Env }>();
 
 /**
  * Rule 1: the client sends batches and shows progress; a killed request can
- * then lose at most this many writes, each individually reported.
+ * then lose at most this many writes, each individually reported. Ten, not
+ * five, because a batch must hold a whole day: the pre-write duplicate
+ * check below is day-level against entries fetched before the batch, so a
+ * day split across two batches would see its first half as "already
+ * exists" — and a day now holds one entry per issue.
  */
-const MAX_ENTRIES = 5;
+const MAX_ENTRIES = 10;
 
 const DAY_MS = 86_400_000;
 
@@ -211,20 +215,22 @@ function isAmbiguousFailure(err: unknown): boolean {
  * own day first (widened ±1 day, same reasoning as the batch-level
  * pre-check) and ask whether it landed after all. Deliberately a fresh
  * fetch, never reusing the batch-level `existing` list, which predates this
- * specific write attempt and cannot know about it.
+ * specific write attempt and cannot know about it. Matches on the exact
+ * start instant (findLanded), not the local day: a sibling entry from the
+ * same day — possibly written seconds earlier in this very batch — must not
+ * vouch for this one.
  */
 async function recheckLanded(
   key: string,
   base: string,
   workspaceId: string,
   userId: string,
-  timezone: string,
   entry: ProposedEntry,
 ): Promise<boolean> {
   const widenedStart = toClockifyIso(Date.parse(entry.start) - DAY_MS);
   const widenedEnd = toClockifyIso(Date.parse(entry.end) + DAY_MS);
   const fresh = await listEntries(key, base, workspaceId, userId, widenedStart, widenedEnd);
-  return findDuplicate(entry, fresh, timezone) !== undefined;
+  return findLanded(entry, fresh) !== undefined;
 }
 
 applyRoutes.post('/', async (c) => {
@@ -271,11 +277,21 @@ applyRoutes.post('/', async (c) => {
     toClockifyIso(maxEnd + DAY_MS),
   );
 
+  // Entries written in THIS batch, keyed `${projectId}@${start}`. They are
+  // deliberately not pushed into `existing`: that list drives the day-level
+  // check, and a day now legitimately holds several entries (one per
+  // issue), so a sibling written moments ago must not turn the rest of its
+  // day into duplicates. An exact repeat (same project, same start) is
+  // still caught here — the belt-and-braces this route keeps against a
+  // client that sends the same entry twice.
+  const writtenStarts = new Set<string>();
+  const startKey = (entry: ProposedEntry) => `${entry.projectId}@${entry.start}`;
+
   // Rule 3: sequential, never concurrent. Clockify Free workspaces allow
   // only 30 requests/hour, workspace-wide — firing concurrently just
   // converts that budget into 429s.
   for (const entry of entries) {
-    if (findDuplicate(entry, existing, timezone)) {
+    if (findDuplicate(entry, existing, timezone) || writtenStarts.has(startKey(entry))) {
       results.push({
         date: entry.date,
         key: entry.key,
@@ -288,20 +304,7 @@ applyRoutes.post('/', async (c) => {
 
     try {
       const created = await createEntry(key, base, workspaceId, entry);
-      // Augment the in-memory `existing` list so a later entry in this same
-      // batch that happens to match this one (same day/project) is caught
-      // by findDuplicate rather than written a second time. The shipped
-      // client can't trigger this today — aggregate.ts buckets by day so
-      // plan dates are unique — but this route otherwise trusts nothing the
-      // client sends, and this was the one gap in that posture on the
-      // write path.
-      existing.push({
-        id: created.id,
-        start: entry.start,
-        end: entry.end,
-        description: entry.description,
-        projectId: entry.projectId,
-      });
+      writtenStarts.add(startKey(entry));
       results.push({ date: entry.date, key: entry.key, ok: true, entryId: created.id });
     } catch (err) {
       // Rule 4: one entry's failure never aborts the batch.
@@ -311,7 +314,7 @@ applyRoutes.post('/', async (c) => {
         // inside a try) so a recheck failure can never be mistaken for "it
         // did not land": each outcome is its own branch, not a shared
         // mutable flag.
-        const recheck = await recheckLanded(key, base, workspaceId, userId, timezone, entry).then(
+        const recheck = await recheckLanded(key, base, workspaceId, userId, entry).then(
           (landed) => ({ recheckOk: true as const, landed }),
           () => ({ recheckOk: false as const }),
         );
@@ -332,6 +335,7 @@ applyRoutes.post('/', async (c) => {
           continue;
         }
         if (recheck.landed) {
+          writtenStarts.add(startKey(entry));
           results.push({
             date: entry.date,
             key: entry.key,

@@ -506,4 +506,214 @@ describe('apply route', () => {
       entryId: 'new-2',
     });
   });
+
+  it('15. two entries on the same day (one per issue) are both written — the second is not a duplicate of the first', async () => {
+    let createCount = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        userHandler(UID),
+        emptyListHandler(),
+        {
+          test: isCreateEntry,
+          respond: () => {
+            createCount += 1;
+            return jsonResponse({ id: `new-${createCount}` });
+          },
+        },
+      ]),
+    );
+    const first = {
+      ...ENTRY_1,
+      key: '2026-08-01|acme/repo#1',
+      group: 'acme/repo#1',
+      start: '2026-08-01T09:00:00Z',
+      end: '2026-08-01T13:00:00Z',
+    };
+    const second = {
+      ...ENTRY_1,
+      key: '2026-08-01|acme/repo#2',
+      group: 'acme/repo#2',
+      start: '2026-08-01T13:00:00Z',
+      end: '2026-08-01T17:00:00Z',
+    };
+
+    const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toEqual([
+      { date: '2026-08-01', key: first.key, ok: true, entryId: 'new-1' },
+      { date: '2026-08-01', key: second.key, ok: true, entryId: 'new-2' },
+    ]);
+    expect(createCount).toBe(2);
+  });
+
+  it('16. an exact repeat within one batch (same project and start) is still skipped after the first write', async () => {
+    let createCount = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        userHandler(UID),
+        emptyListHandler(),
+        {
+          test: isCreateEntry,
+          respond: () => {
+            createCount += 1;
+            return jsonResponse({ id: `new-${createCount}` });
+          },
+        },
+      ]),
+    );
+
+    const res = await post('/api/apply', { ...VALID_BODY, entries: [ENTRY_1, ENTRY_1] });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results).toEqual([
+      { date: '2026-08-01', key: ENTRY_1.key, ok: true, entryId: 'new-1' },
+      { date: '2026-08-01', key: ENTRY_1.key, ok: true, skipped: true, error: 'Already exists' },
+    ]);
+    expect(createCount).toBe(1);
+  });
+
+  it('17. an existing entry on the day still marks every entry of that day as a duplicate — the day-level rule is unchanged', async () => {
+    const fetchMock = routedFetch([
+      userHandler(UID),
+      existingEntryHandler('2026-08-01T07:00:00Z'),
+      { test: isCreateEntry, respond: () => jsonResponse({ id: 'should-not-happen' }) },
+    ]);
+    vi.stubGlobal('fetch', fetchMock);
+    const first = { ...ENTRY_1, key: '2026-08-01|acme/repo#1', group: 'acme/repo#1' };
+    const second = {
+      ...ENTRY_1,
+      key: '2026-08-01|acme/repo#2',
+      group: 'acme/repo#2',
+      start: '2026-08-01T17:00:00Z',
+      end: '2026-08-01T18:00:00Z',
+    };
+
+    const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results.map((r) => r.skipped)).toEqual([true, true]);
+    const postCalls = fetchMock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(postCalls).toHaveLength(0);
+  });
+
+  it("18. the recheck after an ambiguous failure looks for THIS entry's start, not merely any entry on the day", async () => {
+    // Entry 1 (09:00) is written fine. Entry 2 (13:00) 500s; the recheck
+    // list shows only entry 1 — so entry 2 did NOT land and must be
+    // reported as a failure, not as "Already exists".
+    let listCalls = 0;
+    let createCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        userHandler(UID),
+        {
+          test: isListEntries,
+          respond: () => {
+            listCalls += 1;
+            if (listCalls === 1) return jsonResponse([], { headers: { 'Last-Page': 'true' } });
+            return jsonResponse(
+              [
+                {
+                  id: 'new-1',
+                  timeInterval: { start: '2026-08-01T09:00:00Z', end: '2026-08-01T13:00:00Z' },
+                  description: 'x',
+                  projectId: PROJECT_ID,
+                },
+              ],
+              { headers: { 'Last-Page': 'true' } },
+            );
+          },
+        },
+        {
+          test: isCreateEntry,
+          respond: () => {
+            createCalls += 1;
+            return createCalls === 1 ? jsonResponse({ id: 'new-1' }) : errorResponse(500);
+          },
+        },
+      ]),
+    );
+    const first = {
+      ...ENTRY_1,
+      key: '2026-08-01|acme/repo#1',
+      group: 'acme/repo#1',
+      end: '2026-08-01T13:00:00Z',
+    };
+    const second = {
+      ...ENTRY_1,
+      key: '2026-08-01|acme/repo#2',
+      group: 'acme/repo#2',
+      start: '2026-08-01T13:00:00Z',
+      end: '2026-08-01T17:00:00Z',
+    };
+
+    const res = await post('/api/apply', { ...VALID_BODY, entries: [first, second] });
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ results: ApplyResult[] }>();
+    expect(body.results[0]).toEqual({
+      date: '2026-08-01',
+      key: first.key,
+      ok: true,
+      entryId: 'new-1',
+    });
+    expect(body.results[1]).toEqual(expect.objectContaining({ key: second.key, ok: false }));
+    expect(body.results[1]?.skipped).toBeUndefined();
+    expect(listCalls).toBe(2);
+  });
+
+  it('19. a key that does not equal `${date}|${group}` is rejected 400 with no fetch', async () => {
+    const fetchMock = neverCalledFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await post('/api/apply', {
+      ...VALID_BODY,
+      entries: [{ ...ENTRY_1, key: '2026-08-01|acme/repo#9', group: '' }],
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json<{ error: string }>()).error).toBe('invalid_request');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('20. ten entries are accepted (the cap holds a whole day of per-issue entries)', async () => {
+    let createCount = 0;
+    vi.stubGlobal(
+      'fetch',
+      routedFetch([
+        userHandler(UID),
+        emptyListHandler(),
+        {
+          test: isCreateEntry,
+          respond: () => {
+            createCount += 1;
+            return jsonResponse({ id: `new-${createCount}` });
+          },
+        },
+      ]),
+    );
+    const entries = Array.from({ length: 10 }, (_, i) => {
+      const hh = String(9 + i).padStart(2, '0');
+      return {
+        ...ENTRY_1,
+        key: `2026-08-01|acme/repo#${i + 1}`,
+        group: `acme/repo#${i + 1}`,
+        start: `2026-08-01T${hh}:00:00Z`,
+        end: `2026-08-01T${hh}:30:00Z`,
+      };
+    });
+
+    const res = await post('/api/apply', { ...VALID_BODY, entries });
+
+    expect(res.status).toBe(200);
+    expect(createCount).toBe(10);
+  });
 });

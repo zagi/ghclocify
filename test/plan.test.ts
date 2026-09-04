@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPlan, findDuplicate } from '../src/plan';
+import { buildPlan, findDuplicate, findLanded, overflowingDates } from '../src/plan';
 import type { ExistingEntry, ProposedEntry } from '../src/types';
 
 function proposed(overrides: Partial<ProposedEntry> = {}): ProposedEntry {
@@ -203,5 +203,44 @@ describe('buildPlan', () => {
   it('12. an unparseable existing.start fails loudly rather than silently non-matching', () => {
     const bad = existing({ id: 'bad-start', start: 'not-a-date' });
     expect(() => findDuplicate(proposed(), [bad], 'UTC')).toThrow();
+  });
+
+  it('13. findLanded matches on project and the exact start instant, not the day', () => {
+    const sibling = existing({ id: 'sibling', start: '2026-08-03T09:00:00Z' });
+    const mine = existing({ id: 'mine', start: '2026-08-03T13:00:00Z' });
+    const second = proposed({ start: '2026-08-03T13:00:00Z', end: '2026-08-03T17:00:00Z' });
+    expect(findLanded(second, [sibling])).toBeUndefined();
+    expect(findLanded(second, [sibling, mine])).toEqual(mine);
+    // A different project at the same instant is not it.
+    expect(
+      findLanded(second, [existing({ id: 'p2', start: mine.start, projectId: 'proj2' })]),
+    ).toBeUndefined();
+    // Millisecond formatting differences do not matter — instants compare.
+    expect(findLanded(second, [existing({ id: 'ms', start: '2026-08-03T13:00:00.000Z' })])).toEqual(
+      existing({ id: 'ms', start: '2026-08-03T13:00:00.000Z' }),
+    );
+  });
+
+  it('14. overflowingDates lists days where an entry starts on a different local day than its date', () => {
+    const fine = proposed({ date: '2026-08-03', start: '2026-08-03T09:00:00Z' });
+    const spilled = proposed({
+      date: '2026-08-04',
+      key: '2026-08-04|acme/demo#2',
+      start: '2026-08-05T01:00:00Z',
+      end: '2026-08-05T03:00:00Z',
+    });
+    expect(overflowingDates([fine], 'UTC')).toEqual([]);
+    expect(overflowingDates([fine, spilled], 'UTC')).toEqual(['2026-08-04']);
+    // Under Europe/Warsaw (UTC+2 in August) 2026-08-05T01:00Z is still 03:00
+    // on the 5th — still overflowing the 4th.
+    expect(overflowingDates([spilled], 'Europe/Warsaw')).toEqual(['2026-08-04']);
+    // 2026-08-04T22:30Z is 00:30 on the 5th in Warsaw: overflow there, fine in UTC.
+    const edge = proposed({
+      date: '2026-08-04',
+      key: '2026-08-04|',
+      start: '2026-08-04T22:30:00Z',
+    });
+    expect(overflowingDates([edge], 'Europe/Warsaw')).toEqual(['2026-08-04']);
+    expect(overflowingDates([edge], 'UTC')).toEqual([]);
   });
 });

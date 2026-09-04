@@ -42,6 +42,38 @@ export function findDuplicate(
 }
 
 /**
+ * The write route's post-write check: did THIS entry land? Matches on
+ * project and the exact start instant rather than the local day, because a
+ * day now holds one entry per issue and a sibling written moments earlier
+ * in the same batch must not be mistaken for this one. Relies on
+ * aggregate.ts laying a day's entries out back-to-back, so no two proposed
+ * entries on one day ever share a start.
+ */
+export function findLanded(
+  entry: ProposedEntry,
+  existing: ExistingEntry[],
+): ExistingEntry | undefined {
+  const start = Date.parse(entry.start);
+  return existing.find(
+    (candidate) => candidate.projectId === entry.projectId && Date.parse(candidate.start) === start,
+  );
+}
+
+/**
+ * Dates on which at least one entry no longer starts on its own local day —
+ * what a large manual hours total does to the later entries of a day. The
+ * apply route rejects such entries (date/start mismatch), so the client
+ * refuses to send them and shows these dates instead. Sorted ascending.
+ */
+export function overflowingDates(entries: ProposedEntry[], timezone: string): string[] {
+  const dates = new Set<string>();
+  for (const entry of entries) {
+    if (localDayOf(entry.start, timezone) !== entry.date) dates.add(entry.date);
+  }
+  return [...dates].sort();
+}
+
+/**
  * Build the full import plan: every proposed entry tagged `new` or
  * `duplicate` (rule 4, with `existing` populated on duplicates), plus
  * totals and the pass-through `skipped`/`warnings` from the caller.
