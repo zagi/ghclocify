@@ -422,6 +422,32 @@ input[type='radio'] {
   gap: 0.75rem;
 }
 
+/* Icons */
+
+.icon {
+  display: inline-block;
+  vertical-align: -0.125em;
+  flex: none;
+}
+
+.btn .icon {
+  margin-right: 0.4rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+}
+
+.status-pill .icon {
+  margin-right: 0.25rem;
+}
+
+th .icon {
+  margin-right: 0.25rem;
+  opacity: 0.7;
+}
+
 .actions-nav {
   justify-content: space-between;
   margin-top: 1.5rem;

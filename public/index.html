@@ -349,8 +349,10 @@
 
             <div id="plan-warning" class="banner banner-warning" role="alert" hidden>
               <p>
-                This workspace is on Clockify's <strong>Free</strong> plan, which allows only 30 API
-                requests per hour. Large imports may be slow or need to be split up.
+                <span class="banner-text"
+                  >This workspace is on Clockify's <strong>Free</strong> plan, which allows only 30
+                  API requests per hour. Large imports may be slow or need to be split up.</span
+                >
               </p>
             </div>
 
@@ -389,7 +391,7 @@
             aria-live="polite"
             hidden
           >
-            <p></p>
+            <p><span class="banner-text"></span></p>
           </div>
 
           <div class="field field-checkbox">
@@ -417,11 +419,11 @@
                   </th>
                   <th scope="col">Date</th>
                   <th scope="col">Day</th>
-                  <th scope="col">Issue</th>
+                  <th scope="col" data-col="issue">Issue</th>
                   <th scope="col">Activity</th>
                   <th scope="col">Repositories</th>
                   <th scope="col">Description</th>
-                  <th scope="col">Hours</th>
+                  <th scope="col" data-col="hours">Hours</th>
                   <th scope="col">Status</th>
                 </tr>
               </thead>

@@ -31,7 +31,7 @@ import {
   savePrefs,
 } from './state';
 import type { DatePreset, ScanSourceKey, State } from './state';
-import { renderAll } from './render';
+import { renderAll, renderStaticIcons } from './render';
 import { aggregate } from '../src/aggregate';
 import { buildPlan, overflowingDates } from '../src/plan';
 import { dayKey, isValidTimezone, utcOffsetLabel, utcRangeForLocalDays } from '../src/timezone';
@@ -1077,6 +1077,7 @@ function wirePreviewStep(): void {
 }
 
 function init(): void {
+  renderStaticIcons();
   initFormFromState();
   wireConnectStep();
   wireScopeStep();

@@ -15,6 +15,7 @@ import { groupLabel } from '../src/aggregate';
 import { estimateImport, formatDuration, freeTierHours } from '../src/hours';
 import { overflowingDates } from '../src/plan';
 import type { PlannedEntry } from '../src/types';
+import { icon, type IconName } from './icons';
 import type { State } from './state';
 
 /** Mirrors client/app.ts APPLY_CHUNK and src/routes/apply.ts MAX_ENTRIES. */
@@ -28,6 +29,49 @@ function el<T extends HTMLElement = HTMLElement>(id: string): T {
 
 function setText(id: string, text: string): void {
   el(id).textContent = text;
+}
+
+export function setButtonLabel(button: HTMLButtonElement, name: IconName, text: string): void {
+  button.replaceChildren(
+    icon(name),
+    Object.assign(document.createElement('span'), { textContent: text }),
+  );
+}
+
+/** Sets the static (never re-rendered) icons: the stepper numbers, the nav
+ *  buttons whose label doesn't change across renders, the preview table's
+ *  Issue/Hours column headers, and the alert icon inside the two warning
+ *  banners. Called once from app.ts's `init()`, before the first `render()`. */
+export function renderStaticIcons(): void {
+  const stepIcons: Record<string, IconName> = {
+    '1': 'connect',
+    '2': 'filter',
+    '3': 'mapping',
+    '4': 'upload',
+  };
+  for (const [step, name] of Object.entries(stepIcons)) {
+    const num = document.querySelector<HTMLElement>(
+      `.stepper-item[data-step="${step}"] .stepper-num`,
+    );
+    if (num)
+      num.replaceChildren(
+        icon(name, { size: 14 }),
+        document.createTextNode(` ${num.textContent?.trim() ?? ''}`),
+      );
+  }
+  setButtonLabel(el('connect-continue') as HTMLButtonElement, 'next', 'Continue to scope');
+  setButtonLabel(el('scope-back') as HTMLButtonElement, 'back', 'Back');
+  setButtonLabel(el('scope-continue') as HTMLButtonElement, 'next', 'Continue to mapping');
+  setButtonLabel(el('mapping-back') as HTMLButtonElement, 'back', 'Back');
+  setButtonLabel(el('mapping-continue') as HTMLButtonElement, 'filter', 'Scan activity');
+  const issueTh = document.querySelector<HTMLElement>('#preview-table-wrap th[data-col="issue"]');
+  if (issueTh) issueTh.prepend(icon('hash', { size: 12 }));
+  const hoursTh = document.querySelector<HTMLElement>('#preview-table-wrap th[data-col="hours"]');
+  if (hoursTh) hoursTh.prepend(icon('clock', { size: 12 }));
+  const planWarningP = document.querySelector<HTMLElement>('#plan-warning p');
+  if (planWarningP) planWarningP.prepend(icon('alert'));
+  const dupWarningP = document.querySelector<HTMLElement>('#duplicate-check-warning p');
+  if (dupWarningP) dupWarningP.prepend(icon('alert'));
 }
 
 const WEEKDAY_FMT = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'UTC' });
@@ -107,7 +151,7 @@ export function renderConnect(state: State): void {
   const verifyBtn = el('verify-btn') as HTMLButtonElement;
   const checking = connect.githubStatus === 'checking' || connect.clockifyStatus === 'checking';
   verifyBtn.disabled = checking;
-  verifyBtn.textContent = checking ? 'Verifying…' : 'Verify connection';
+  setButtonLabel(verifyBtn, 'shield', checking ? 'Verifying…' : 'Verify connection');
 }
 
 // ---- step 2: scope ----
@@ -307,9 +351,9 @@ export function renderMapping(state: State): void {
   if (selectedWorkspace?.freeTier) {
     warning.hidden = false;
     const label = selectedWorkspace.plan === 'UNKNOWN' ? 'could not be determined' : 'is Free';
-    const p = warning.querySelector('p');
-    if (p) {
-      p.textContent =
+    const span = warning.querySelector('.banner-text');
+    if (span) {
+      span.textContent =
         selectedWorkspace.plan === 'UNKNOWN'
           ? `This workspace's plan ${label}, so we're assuming it's on Clockify's Free plan (30 API requests per hour, workspace-wide) to be safe. Large imports may be slow or need to be split up.`
           : `This workspace ${label} on Clockify, which allows only 30 API requests per hour, workspace-wide. Large imports may be slow or need to be split up.`;
@@ -330,8 +374,8 @@ export function renderScanProgress(state: State): void {
   const dupWarning = el('duplicate-check-warning');
   if (state.existingEntriesError) {
     dupWarning.hidden = false;
-    const p = dupWarning.querySelector('p');
-    if (p) p.textContent = state.existingEntriesError;
+    const span = dupWarning.querySelector('.banner-text');
+    if (span) span.textContent = state.existingEntriesError;
   } else {
     dupWarning.hidden = true;
   }
@@ -376,7 +420,11 @@ export function renderScanProgress(state: State): void {
 function statusPill(status: PlannedEntry['status']): HTMLElement {
   const span = document.createElement('span');
   span.className = `status-pill status-${status === 'duplicate' ? 'pending' : 'success'}`;
-  span.textContent = status === 'duplicate' ? 'Duplicate' : 'New';
+  const isDuplicate = status === 'duplicate';
+  span.append(
+    icon(isDuplicate ? 'copy' : 'sparkles', { size: 12 }),
+    document.createTextNode(isDuplicate ? 'Duplicate' : 'New'),
+  );
   return span;
 }
 
@@ -462,7 +510,7 @@ export function renderPreviewTable(state: State): void {
     freeWarning.hidden = true;
     rowsEl.innerHTML = '';
     (el('import-btn') as HTMLButtonElement).disabled = true;
-    (el('import-btn') as HTMLButtonElement).textContent = 'Import entries';
+    setButtonLabel(el('import-btn') as HTMLButtonElement, 'upload', 'Import entries');
     return;
   }
 
@@ -489,7 +537,7 @@ export function renderPreviewTable(state: State): void {
     tr.appendChild(td);
     rowsEl.appendChild(tr);
     (el('import-btn') as HTMLButtonElement).disabled = true;
-    (el('import-btn') as HTMLButtonElement).textContent = 'Import entries';
+    setButtonLabel(el('import-btn') as HTMLButtonElement, 'upload', 'Import entries');
     return;
   }
 
@@ -606,14 +654,22 @@ export function renderPreviewTable(state: State): void {
   const importBtn = el('import-btn') as HTMLButtonElement;
   if (importingNow) {
     importBtn.disabled = false;
-    importBtn.textContent = `Stop (${state.importing.completed} of ${state.importing.total} imported)`;
+    setButtonLabel(
+      importBtn,
+      'stop',
+      `Stop (${state.importing.completed} of ${state.importing.total} imported)`,
+    );
   } else {
     importBtn.disabled = selectedCount === 0 || overflow.length > 0;
-    importBtn.textContent = 'Import entries';
+    setButtonLabel(importBtn, 'upload', 'Import entries');
   }
 
-  (el('preview-back') as HTMLButtonElement).textContent =
-    state.scan.status === 'running' ? 'Cancel scan' : 'Back';
+  const previewBack = el('preview-back') as HTMLButtonElement;
+  if (state.scan.status === 'running') {
+    setButtonLabel(previewBack, 'x', 'Cancel scan');
+  } else {
+    setButtonLabel(previewBack, 'back', 'Back');
+  }
 }
 
 // ---- step 4: import results ----
@@ -636,13 +692,13 @@ export function renderImportResults(state: State): void {
     const pill = document.createElement('span');
     if (result.ok && !result.skipped) {
       pill.className = 'status-pill status-success';
-      pill.textContent = 'Imported';
+      pill.append(icon('success', { size: 12 }), document.createTextNode('Imported'));
     } else if (result.skipped) {
       pill.className = 'status-pill status-pending';
-      pill.textContent = 'Already exists';
+      pill.append(icon('copy', { size: 12 }), document.createTextNode('Already exists'));
     } else {
       pill.className = 'status-pill status-error';
-      pill.textContent = 'Failed';
+      pill.append(icon('alert', { size: 12 }), document.createTextNode('Failed'));
     }
     li.appendChild(pill);
     const entry = state.plan?.entries.find((e) => e.key === result.key);
