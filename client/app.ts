@@ -33,6 +33,12 @@ import {
 import type { DatePreset, ScanSourceKey, State } from './state';
 import { renderAll, renderStaticIcons } from './render';
 import { createToaster } from './toast';
+import {
+  notificationsSupported,
+  notifyIfHidden,
+  notifyPermissionGranted,
+  requestNotifyPermission,
+} from './notify';
 import { aggregate } from '../src/aggregate';
 import { buildPlan, overflowingDates } from '../src/plan';
 import { dayKey, isValidTimezone, utcOffsetLabel, utcRangeForLocalDays } from '../src/timezone';
@@ -493,6 +499,7 @@ async function runScan(): Promise<void> {
     });
     announce('Scan failed.');
     toaster.push({ kind: 'error', title: 'Scan failed', message: fatalError });
+    if (store.getState().prefs.notifyWhenDone) notifyIfHidden('Scan failed', fatalError);
     return;
   }
 
@@ -510,20 +517,16 @@ async function runScan(): Promise<void> {
   });
   announce(cancelled ? 'Scan cancelled.' : `Scan complete: ${activities.length} activities found.`);
   if (cancelled) {
-    toaster.push({
-      kind: 'warning',
-      title: 'Scan cancelled',
-      message: `${activities.length} activities gathered`,
-    });
+    const message = `${activities.length} activities gathered`;
+    toaster.push({ kind: 'warning', title: 'Scan cancelled', message });
+    if (store.getState().prefs.notifyWhenDone) notifyIfHidden('Scan cancelled', message);
   } else {
-    toaster.push({
-      kind: 'success',
-      title: 'Scan complete',
-      message:
-        warnings.length > 0
-          ? `${activities.length} activities found, ${warnings.length} warnings`
-          : `${activities.length} activities found`,
-    });
+    const message =
+      warnings.length > 0
+        ? `${activities.length} activities found, ${warnings.length} warnings`
+        : `${activities.length} activities found`;
+    toaster.push({ kind: 'success', title: 'Scan complete', message });
+    if (store.getState().prefs.notifyWhenDone) notifyIfHidden('Scan complete', message);
   }
 
   if (!cancelled) await loadExistingEntriesAndRecompute();
@@ -664,11 +667,13 @@ async function runImport(): Promise<void> {
   const imported = results.filter((r) => r.ok && !r.skipped).length;
   const skippedCount = results.filter((r) => r.skipped).length;
   const failed = results.filter((r) => !r.ok).length;
+  const importMessage = `${imported} imported · ${skippedCount} already existed · ${failed} failed`;
   toaster.push({
     kind: failed > 0 ? 'warning' : 'success',
     title: 'Import finished',
-    message: `${imported} imported · ${skippedCount} already existed · ${failed} failed`,
+    message: importMessage,
   });
+  if (store.getState().prefs.notifyWhenDone) notifyIfHidden('Import finished', importMessage);
 }
 
 // ---- DOM wiring ----
@@ -710,6 +715,15 @@ function initFormFromState(): void {
   qs<HTMLInputElement>('source-reviews').checked = s.prefs.sources.reviews;
 
   qs<HTMLInputElement>('split-evenly').checked = s.prefs.splitEvenly;
+
+  const notifyField = qs('notify-field');
+  notifyField.hidden = !notificationsSupported();
+  if (s.prefs.notifyWhenDone && !notifyPermissionGranted()) {
+    store.update((st) => {
+      st.prefs.notifyWhenDone = false;
+    });
+  }
+  qs<HTMLInputElement>('notify-when-done').checked = store.getState().prefs.notifyWhenDone;
 
   savePrefs(store.getState().prefs);
 }
@@ -1082,6 +1096,29 @@ function wirePreviewStep(): void {
     });
     savePrefs(store.getState().prefs);
     recomputePlan();
+  });
+
+  qs<HTMLInputElement>('notify-when-done').addEventListener('change', async (e) => {
+    const input = e.target as HTMLInputElement;
+    if (input.checked) {
+      const granted = await requestNotifyPermission();
+      if (!granted) {
+        input.checked = false;
+        toaster.push({
+          kind: 'warning',
+          title: 'Notifications are blocked',
+          message: 'Allow notifications for this site in your browser settings to use this.',
+        });
+      }
+      store.update((s) => {
+        s.prefs.notifyWhenDone = granted;
+      });
+    } else {
+      store.update((s) => {
+        s.prefs.notifyWhenDone = false;
+      });
+    }
+    savePrefs(store.getState().prefs);
   });
 
   qs('preview-rows').addEventListener('change', (e) => {

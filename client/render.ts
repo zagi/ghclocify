@@ -523,6 +523,9 @@ export function renderPreviewTable(state: State): void {
   splitEvenlyInput.checked = state.prefs.splitEvenly;
   splitEvenlyInput.disabled = importingNow;
 
+  const notifyInput = el('notify-when-done') as HTMLInputElement;
+  notifyInput.checked = state.prefs.notifyWhenDone;
+
   wrap.hidden = false;
   rowsEl.innerHTML = '';
 

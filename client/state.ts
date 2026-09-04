@@ -46,6 +46,7 @@ export type Prefs = {
   billable: boolean;
   includeWeekends: boolean;
   splitEvenly: boolean;
+  notifyWhenDone: boolean;
 };
 
 function detectTimezone(): string {
@@ -76,6 +77,7 @@ export function defaultPrefs(): Prefs {
     billable: false,
     includeWeekends: false,
     splitEvenly: true,
+    notifyWhenDone: false,
   };
 }
 
