@@ -664,6 +664,11 @@ async function runImport(): Promise<void> {
 
   store.update((s) => {
     s.importing.status = 'done';
+    // Imported and already-existing entries are done; only failures stay
+    // selected, so the next click on "Import" retries exactly those.
+    const next = new Set(s.checkedKeys);
+    for (const r of s.importing.results) if (r.ok) next.delete(r.key);
+    s.checkedKeys = next;
   });
   announce('Import finished.');
 

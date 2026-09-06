@@ -16,7 +16,7 @@
 import { groupLabel } from '../src/aggregate';
 import { APPLY_CHUNK, estimateImport, formatDuration, freeTierHours } from '../src/hours';
 import { overflowingDates } from '../src/plan';
-import type { PlannedEntry } from '../src/types';
+import type { ApplyResult, PlannedEntry } from '../src/types';
 import { icon, type IconName } from './icons';
 import type { State } from './state';
 
@@ -449,6 +449,30 @@ export function renderScanProgress(state: State): void {
 
 // ---- step 4: preview table ----
 
+/** The last apply result for an entry key, if the current import touched it. */
+function latestResultFor(state: State, key: string): ApplyResult | undefined {
+  const { results } = state.importing;
+  for (let i = results.length - 1; i >= 0; i -= 1) {
+    if (results[i]?.key === key) return results[i];
+  }
+  return undefined;
+}
+
+function resultPill(result: ApplyResult): HTMLElement {
+  const span = document.createElement('span');
+  if (result.ok && !result.skipped) {
+    span.className = 'status-pill status-success';
+    span.append(icon('success', { size: 12 }), document.createTextNode('Imported'));
+  } else if (result.skipped) {
+    span.className = 'status-pill status-pending';
+    span.append(icon('copy', { size: 12 }), document.createTextNode('Already exists'));
+  } else {
+    span.className = 'status-pill status-error';
+    span.append(icon('alert', { size: 12 }), document.createTextNode('Failed'));
+  }
+  return span;
+}
+
 function statusPill(status: PlannedEntry['status']): HTMLElement {
   const span = document.createElement('span');
   span.className = `status-pill status-${status === 'duplicate' ? 'pending' : 'success'}`;
@@ -653,8 +677,20 @@ export function renderPreviewTable(state: State): void {
 
     const statusTd = document.createElement('td');
     statusTd.className = 'status-cell';
-    statusTd.appendChild(statusPill(entry.status));
-    if (entry.status === 'duplicate' && entry.existing) {
+    const result = latestResultFor(state, entry.key);
+    if (result) {
+      statusTd.appendChild(resultPill(result));
+      if (result.ok && !result.skipped) tr.classList.add('is-imported');
+      if (!result.ok && result.error) {
+        const errorP = document.createElement('div');
+        errorP.className = 'field-hint';
+        errorP.textContent = result.error;
+        statusTd.appendChild(errorP);
+      }
+    } else {
+      statusTd.appendChild(statusPill(entry.status));
+    }
+    if (!result && entry.status === 'duplicate' && entry.existing) {
       const existingP = document.createElement('div');
       existingP.className = 'field-hint';
       existingP.textContent = `Existing: ${entry.existing.description || '(no description)'}`;
@@ -715,7 +751,13 @@ export function renderPreviewTable(state: State): void {
     );
   } else {
     importBtn.disabled = selectedCount === 0 || overflow.length > 0;
-    setButtonLabel(importBtn, 'upload', 'Import entries');
+    setButtonLabel(
+      importBtn,
+      'upload',
+      selectedCount === 0
+        ? 'Import entries'
+        : `Import ${selectedCount} ${selectedCount === 1 ? 'entry' : 'entries'}`,
+    );
   }
 
   const previewBack = el('preview-back') as HTMLButtonElement;
