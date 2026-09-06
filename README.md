@@ -1,3 +1,5 @@
+<img src="public/logo.svg" width="56" height="56" alt="" align="left" />
+
 # gh2clockify
 
 Turn a stretch of your own GitHub activity — commits, pull requests, issues,
@@ -206,3 +208,8 @@ browser holds the accumulating state, drives the progress bar, and can
 retry or cancel any individual chunk. That split is what keeps every
 Worker invocation short and stateless: there is no in-progress import
 sitting on the server for a dropped connection to orphan.
+
+## Author
+
+Made by [Michał Zagalski](https://zagalski.pl). If it saves you a monthly
+timesheet chore, you can [buy me a coffee](https://buycoffee.to/zagi14).

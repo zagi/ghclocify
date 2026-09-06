@@ -37,27 +37,32 @@ export function setButtonLabel(button: HTMLButtonElement, name: IconName, text: 
   );
 }
 
-/** Sets the static (never re-rendered) icons: the stepper numbers, the nav
+/** Sets the static (never re-rendered) icons: the nav
  *  buttons whose label doesn't change across renders, the preview table's
  *  Issue/Hours column headers, and the alert icon inside the two warning
  *  banners. Called once from app.ts's `init()`, before the first `render()`. */
+const STEP_ICONS: Record<number, IconName> = {
+  1: 'connect',
+  2: 'filter',
+  3: 'mapping',
+  4: 'upload',
+};
+
+/** The stepper badge shows the step's icon, or a check once the step is
+ *  complete. The visible number was dropped: the badge is only 1.6rem wide and
+ *  an icon and "01" could not share it. A `Step N:` prefix stays for screen
+ *  readers as the badge's first child. */
+function renderStepBadge(item: HTMLElement, complete: boolean): void {
+  const badge = item.querySelector<HTMLElement>('.stepper-badge');
+  if (!badge) return;
+  const wanted = complete ? 'success' : STEP_ICONS[Number(item.dataset.step)];
+  if (!wanted || badge.dataset.icon === wanted) return;
+  badge.dataset.icon = wanted;
+  badge.querySelector('svg')?.remove();
+  badge.append(icon(wanted, { size: 14 }));
+}
+
 export function renderStaticIcons(): void {
-  const stepIcons: Record<string, IconName> = {
-    '1': 'connect',
-    '2': 'filter',
-    '3': 'mapping',
-    '4': 'upload',
-  };
-  for (const [step, name] of Object.entries(stepIcons)) {
-    const num = document.querySelector<HTMLElement>(
-      `.stepper-item[data-step="${step}"] .stepper-num`,
-    );
-    if (num)
-      num.replaceChildren(
-        icon(name, { size: 14 }),
-        document.createTextNode(` ${num.textContent?.trim() ?? ''}`),
-      );
-  }
   setButtonLabel(el('connect-continue') as HTMLButtonElement, 'next', 'Continue to scope');
   setButtonLabel(el('scope-back') as HTMLButtonElement, 'back', 'Back');
   setButtonLabel(el('scope-continue') as HTMLButtonElement, 'next', 'Continue to mapping');
@@ -71,6 +76,8 @@ export function renderStaticIcons(): void {
   if (planWarningP) planWarningP.prepend(icon('alert'));
   const dupWarningP = document.querySelector<HTMLElement>('#duplicate-check-warning p');
   if (dupWarningP) dupWarningP.prepend(icon('alert'));
+  el('coffee-link').prepend(icon('coffee', { size: 14 }));
+  el('source-link').prepend(icon('code', { size: 14 }));
 }
 
 const WEEKDAY_FMT = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'UTC' });
@@ -93,6 +100,7 @@ export function renderStepper(state: State): void {
     const link = item.querySelector('a');
     item.classList.toggle('is-current', step === state.step);
     item.classList.toggle('is-complete', step < state.step);
+    renderStepBadge(item, step < state.step);
     if (link) {
       if (step === state.step) link.setAttribute('aria-current', 'step');
       else link.removeAttribute('aria-current');
@@ -103,6 +111,7 @@ export function renderStepper(state: State): void {
   el('step-scope').hidden = state.step !== 2;
   el('step-mapping').hidden = state.step !== 3;
   el('step-preview').hidden = state.step !== 4;
+  document.querySelector('.page')?.classList.toggle('is-wide', state.step === 4);
 
   if (state.step !== lastStep) {
     for (const panel of document.querySelectorAll<HTMLElement>('.panel')) {
@@ -235,6 +244,8 @@ export function renderRepoList(state: State): void {
 
   const needle = repoFilter.trim().toLowerCase();
   const visible = needle ? repos.filter((r) => r.fullName.toLowerCase().includes(needle)) : repos;
+  const allVisibleSelected = visible.length > 0 && visible.every((r) => selected.has(r.fullName));
+  setText('repo-select-all', allVisibleSelected ? 'Deselect all' : 'Select all');
 
   if (visible.length === 0) {
     const li = document.createElement('li');
@@ -406,6 +417,9 @@ export function renderScanProgress(state: State): void {
   }
 
   wrap.hidden = false;
+  // The bar only means something while the scan runs; afterwards the status
+  // line carries the result and a full bar read as a decorative underline.
+  el('scan-progress').hidden = scan.status !== 'running';
   const pct = scan.status === 'running' ? scan.progress : 100;
   el('scan-progress').setAttribute('aria-valuenow', String(Math.round(pct)));
   el<HTMLElement>('scan-progress-fill').style.width = `${pct}%`;
@@ -590,26 +604,32 @@ export function renderPreviewTable(state: State): void {
     tr.appendChild(selectTd);
 
     const dateTd = document.createElement('td');
+    dateTd.className = 'date-cell';
     dateTd.textContent = entry.date;
     tr.appendChild(dateTd);
 
     const dayTd = document.createElement('td');
+    dayTd.className = 'day-cell';
     dayTd.textContent = weekdayLabel(entry.date);
     tr.appendChild(dayTd);
 
     const issueTd = document.createElement('td');
+    issueTd.className = 'issue-cell';
     issueTd.textContent = groupLabel(entry.group);
     tr.appendChild(issueTd);
 
     const activityTd = document.createElement('td');
+    activityTd.className = 'activity-cell';
     activityTd.textContent = `${entry.activityCount} ${entry.activityCount === 1 ? 'activity' : 'activities'}`;
     tr.appendChild(activityTd);
 
     const reposTd = document.createElement('td');
+    reposTd.className = 'repos-cell';
     reposTd.textContent = entry.repos.join(', ');
     tr.appendChild(reposTd);
 
     const descTd = document.createElement('td');
+    descTd.className = 'description-cell';
     descTd.textContent = entry.description;
     tr.appendChild(descTd);
 
@@ -632,6 +652,7 @@ export function renderPreviewTable(state: State): void {
     tr.appendChild(hoursTd);
 
     const statusTd = document.createElement('td');
+    statusTd.className = 'status-cell';
     statusTd.appendChild(statusPill(entry.status));
     if (entry.status === 'duplicate' && entry.existing) {
       const existingP = document.createElement('div');
@@ -662,14 +683,17 @@ export function renderPreviewTable(state: State): void {
     totals.classList.remove('is-error');
     const { seconds } = estimateImport(selectedCount, APPLY_CHUNK);
     const prefix = state.prefs.splitEvenly ? '' : 'Manual hours — ';
-    totals.textContent = `${prefix}${selectedCount} of ${plan.entries.length} entries selected — ${selectedHours.toFixed(2)} hours · ~${formatDuration(seconds)}`;
+    totals.textContent = `${prefix}${selectedCount} of ${plan.entries.length} entries selected — ${selectedHours.toFixed(2)} hours · import takes ~${formatDuration(seconds)}`;
   }
 
   const workspace = state.connect.workspaces.find((w) => w.id === state.prefs.workspaceId);
   if (workspace?.freeTier && selectedCount > 0) {
     const hours = freeTierHours(selectedCount, APPLY_CHUNK);
     freeWarning.hidden = false;
-    const nextText = `Free Clockify plan: 30 API requests per hour, workspace-wide. This import needs about ${hours} hour${hours === 1 ? '' : 's'} and will start failing with 429 after roughly 24 entries — uncheck rows or import in stages.`;
+    const nextText =
+      hours <= 1
+        ? 'Free Clockify plan: 30 API requests per hour, workspace-wide. This import fits in one hour of quota, so run it once — a second run in the same hour may be rejected with 429.'
+        : `Free Clockify plan: 30 API requests per hour, workspace-wide. This import needs about ${hours} hours and will start failing with 429 after roughly 24 entries — uncheck rows or import in stages.`;
     if (freeWarning.textContent !== nextText) freeWarning.textContent = nextText;
   } else {
     freeWarning.hidden = true;

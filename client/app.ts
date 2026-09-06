@@ -398,6 +398,9 @@ async function runScan(): Promise<void> {
   const s0 = store.getState();
   const login = s0.connect.viewer?.login;
   if (!login) return;
+  // Re-entrancy guard: two loops sharing `s.scan` would clobber each other's
+  // progress and cancel flag.
+  if (s0.scan.status === 'running') return;
 
   const scope = repoScope(s0.prefs);
   const repos = [...s0.prefs.selectedRepos];
@@ -957,6 +960,24 @@ function wireScopeStep(): void {
     });
     savePrefs(store.getState().prefs);
     invalidateScan();
+  });
+
+  // Completed steps in the stepper are links back to that step; the current
+  // and future ones stay inert (the panel would be empty).
+  document.querySelector('.stepper')?.addEventListener('click', (e) => {
+    const link = (e.target as HTMLElement).closest<HTMLAnchorElement>('.stepper-item a');
+    if (!link) return;
+    e.preventDefault();
+    const item = link.closest<HTMLElement>('.stepper-item');
+    const target = Number(item?.dataset.step);
+    if (!item?.classList.contains('is-complete') || !(target >= 1 && target <= 3)) return;
+    // Same rule as the preview Back button: while a scan or import runs,
+    // step 4 holds the only Cancel/Stop control, so stay on it.
+    const current = store.getState();
+    if (current.scan.status === 'running' || current.importing.status === 'running') return;
+    store.update((s) => {
+      s.step = target as 1 | 2 | 3;
+    });
   });
 
   qs('scope-back').addEventListener('click', () => {

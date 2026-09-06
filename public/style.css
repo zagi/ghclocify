@@ -18,6 +18,8 @@
   --color-positive-bg: #e6f4f2;
   --color-danger: #b91c1c;
   --color-danger-bg: #fbeaea;
+  --color-warning: #92400e;
+  --color-warning-bg: #fdf1dc;
   --color-focus: #1d4ed8;
 
   --radius: 6px;
@@ -41,6 +43,8 @@
     --color-positive-bg: #10302c;
     --color-danger: #f87171;
     --color-danger-bg: #3a1717;
+    --color-warning: #f7bb6c;
+    --color-warning-bg: #3a2a12;
     --color-focus: #7aa2ff;
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 16px rgba(0, 0, 0, 0.3);
   }
@@ -70,6 +74,13 @@ img {
   max-width: 100%;
 }
 
+/* `.btn` and `.field-checkbox` set `display`, which beats the UA's
+   `[hidden] { display: none }` — without this reset, hiding them via the
+   `hidden` attribute did nothing. */
+[hidden] {
+  display: none !important;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -91,6 +102,13 @@ img {
   max-width: 46rem;
   margin: 0 auto;
   padding: 2rem 1.25rem 4rem;
+  transition: max-width 200ms ease;
+}
+
+/* The preview table has nine columns; the form-width page clipped Hours and
+   Status off the right edge. Step 4 widens the page instead. */
+.page.is-wide {
+  max-width: 72rem;
 }
 
 /* Masthead */
@@ -169,24 +187,46 @@ img {
   background: var(--color-surface-alt);
 }
 
-.stepper-item.is-complete .stepper-num {
+.stepper-badge {
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.75;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease;
+}
+
+.stepper-item.is-current .stepper-badge {
+  opacity: 1;
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.stepper-item.is-complete .stepper-badge {
+  opacity: 1;
   background: var(--color-positive);
   color: var(--color-accent-contrast);
   border-color: var(--color-positive);
 }
 
-.stepper-num {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  font-weight: 700;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  width: 1.6rem;
-  height: 1.6rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+.stepper-item a {
+  cursor: default;
+}
+
+.stepper-item.is-complete a {
+  cursor: pointer;
+}
+
+.stepper-item.is-complete a:hover {
+  color: var(--color-text);
+  background: var(--color-surface-alt);
 }
 
 .stepper-label {
@@ -304,6 +344,7 @@ select:disabled {
 
 .field-checkbox {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.45rem;
   margin-bottom: 0.5rem;
@@ -312,6 +353,8 @@ select:disabled {
 .field-checkbox label {
   margin: 0;
   font-weight: 500;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .field-checkbox .field-hint {
@@ -516,9 +559,13 @@ th .icon {
 }
 
 .banner-warning {
-  background: var(--color-danger-bg);
-  border-left-color: var(--color-danger);
+  background: var(--color-warning-bg);
+  border-left-color: var(--color-warning);
   color: var(--color-text);
+}
+
+.banner-warning .icon {
+  color: var(--color-warning);
 }
 
 /* Progress */
@@ -537,6 +584,10 @@ th .icon {
   width: 0%;
   background: var(--color-accent);
   transition: width 0.2s ease;
+}
+
+#scan-progress-wrap {
+  margin-top: 1rem;
 }
 
 #scan-status {
@@ -580,16 +631,41 @@ tbody td {
   vertical-align: top;
 }
 
+thead th {
+  white-space: nowrap;
+}
+
+td.date-cell,
+td.day-cell,
+td.issue-cell,
+td.activity-cell,
+td.status-cell {
+  white-space: nowrap;
+}
+
+td.repos-cell {
+  min-width: 11rem;
+}
+
+td.description-cell {
+  min-width: 20rem;
+  max-width: 34rem;
+}
+
+/* The pill stays on one line; the "Existing: …" hint under it may wrap. */
+td.status-cell .field-hint {
+  white-space: normal;
+  min-width: 12rem;
+  max-width: 18rem;
+}
+
 tbody tr:last-child td {
   border-bottom: none;
 }
 
 tbody tr.is-duplicate {
   color: var(--color-text-muted);
-}
-
-tbody tr.is-duplicate td:not(:first-child) {
-  border-left: 2px dashed var(--color-border);
+  background: var(--color-surface-alt);
 }
 
 .duplicate-tag {
@@ -647,7 +723,7 @@ tbody tr.is-duplicate td:not(:first-child) {
 }
 
 .totals-warning {
-  color: var(--color-danger);
+  color: var(--color-warning);
   font-weight: 500;
 }
 
@@ -687,6 +763,33 @@ td.hours-cell {
   margin: 0;
 }
 
+.site-footer-meta {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem 0.5rem;
+}
+
+.site-footer a {
+  color: var(--color-text);
+  text-decoration-color: var(--color-border);
+  text-underline-offset: 0.15em;
+}
+
+.site-footer a:hover {
+  color: var(--color-accent);
+  text-decoration-color: currentColor;
+}
+
+.site-footer a .icon {
+  margin-right: 0.25rem;
+}
+
+.coffee-link {
+  color: var(--color-accent);
+}
+
 /* Small screens */
 
 @media (max-width: 640px) {
@@ -705,6 +808,15 @@ td.hours-cell {
 
   .panel {
     padding: 1.25rem;
+  }
+
+  .field-row > .field {
+    flex: 1 1 calc(50% - 0.5rem);
+  }
+
+  .masthead .btn {
+    white-space: nowrap;
+    padding-inline: 0.75rem;
   }
 
   .actions-nav {
