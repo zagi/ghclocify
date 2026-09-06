@@ -797,20 +797,18 @@ td.hours-cell {
 
 /* Small screens */
 
+.toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 50;
+  max-width: min(22rem, calc(100vw - 2rem));
+}
+
 @media (max-width: 640px) {
-  .stepper ol {
-    flex-direction: column;
-  }
-
-  .stepper-item {
-    border-right: none;
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .stepper-item:last-child {
-    border-bottom: none;
-  }
-
   .panel {
     padding: 1.25rem;
   }
@@ -832,17 +830,124 @@ td.hours-cell {
   .actions-nav .btn-primary {
     margin-left: 0;
   }
-}
 
-.toasts {
-  position: fixed;
-  right: 1rem;
-  bottom: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  z-index: 50;
-  max-width: min(22rem, calc(100vw - 2rem));
+  /* Preview as cards: the nine-column table cannot fit a phone. */
+  .page.is-wide {
+    max-width: 46rem;
+  }
+
+  #preview-table-wrap thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+
+  #preview-table-wrap tbody tr {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    grid-template-areas:
+      'check date status'
+      'check issue hours'
+      'check repos repos'
+      'check desc desc';
+    gap: 0.15rem 0.6rem;
+    padding: 0.6rem 0.65rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  #preview-table-wrap tbody td {
+    display: block;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    min-width: 0;
+    max-width: none;
+  }
+
+  #preview-table-wrap tbody td:first-child {
+    grid-area: check;
+    align-self: start;
+  }
+  #preview-table-wrap td.date-cell {
+    grid-area: date;
+    font-weight: 600;
+  }
+  #preview-table-wrap td.day-cell,
+  #preview-table-wrap td.activity-cell {
+    display: none;
+  }
+  #preview-table-wrap td.status-cell {
+    grid-area: status;
+    justify-self: end;
+  }
+  #preview-table-wrap td.issue-cell {
+    grid-area: issue;
+  }
+  #preview-table-wrap td.hours-cell {
+    grid-area: hours;
+    justify-self: end;
+    text-align: right;
+  }
+  #preview-table-wrap td.repos-cell {
+    grid-area: repos;
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+  }
+  #preview-table-wrap td.description-cell {
+    grid-area: desc;
+  }
+  #preview-table-wrap td.repos-cell::before,
+  #preview-table-wrap td.description-cell::before {
+    content: attr(data-label) ': ';
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+  #preview-table-wrap td.status-cell .field-hint {
+    min-width: 0;
+    max-width: none;
+  }
+
+  .toasts {
+    top: 0.75rem;
+    bottom: auto;
+    left: 1rem;
+    right: 1rem;
+    max-width: none;
+  }
+
+  /* One row of badges; only the current step keeps its label. */
+  .stepper ol {
+    flex-direction: row;
+  }
+  .stepper-item {
+    flex: 0 0 auto;
+    border-bottom: none;
+    border-right: 1px solid var(--color-border);
+  }
+  .stepper-item.is-current {
+    flex: 1 1 auto;
+  }
+  .stepper-item:last-child {
+    border-right: none;
+  }
+  .stepper-item a {
+    padding: 0.6rem 0.65rem;
+    justify-content: center;
+  }
+  .stepper-item.is-current a {
+    justify-content: flex-start;
+  }
+  .stepper-label {
+    display: none;
+  }
+  .stepper-item.is-current .stepper-label {
+    display: inline;
+  }
 }
 .toast {
   display: flex;

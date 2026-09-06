@@ -629,36 +629,43 @@ export function renderPreviewTable(state: State): void {
 
     const dateTd = document.createElement('td');
     dateTd.className = 'date-cell';
+    dateTd.dataset.label = 'Date';
     dateTd.textContent = entry.date;
     tr.appendChild(dateTd);
 
     const dayTd = document.createElement('td');
     dayTd.className = 'day-cell';
+    dayTd.dataset.label = 'Day';
     dayTd.textContent = weekdayLabel(entry.date);
     tr.appendChild(dayTd);
 
     const issueTd = document.createElement('td');
     issueTd.className = 'issue-cell';
+    issueTd.dataset.label = 'Issue';
     issueTd.textContent = groupLabel(entry.group);
     tr.appendChild(issueTd);
 
     const activityTd = document.createElement('td');
     activityTd.className = 'activity-cell';
+    activityTd.dataset.label = 'Activity';
     activityTd.textContent = `${entry.activityCount} ${entry.activityCount === 1 ? 'activity' : 'activities'}`;
     tr.appendChild(activityTd);
 
     const reposTd = document.createElement('td');
     reposTd.className = 'repos-cell';
+    reposTd.dataset.label = 'Repositories';
     reposTd.textContent = entry.repos.join(', ');
     tr.appendChild(reposTd);
 
     const descTd = document.createElement('td');
     descTd.className = 'description-cell';
+    descTd.dataset.label = 'Description';
     descTd.textContent = entry.description;
     tr.appendChild(descTd);
 
     const hoursTd = document.createElement('td');
     hoursTd.className = 'hours-cell';
+    hoursTd.dataset.label = 'Hours';
     if (state.prefs.splitEvenly) {
       hoursTd.textContent = hoursOf(entry).toFixed(2);
     } else {
@@ -677,6 +684,7 @@ export function renderPreviewTable(state: State): void {
 
     const statusTd = document.createElement('td');
     statusTd.className = 'status-cell';
+    statusTd.dataset.label = 'Status';
     const result = latestResultFor(state, entry.key);
     if (result) {
       statusTd.appendChild(resultPill(result));
