@@ -15,7 +15,7 @@ task.
 Each GitHub issue you touched on a day becomes its own entry (activities that
 reference no issue share one "Other" entry), and the day's hours are split
 evenly across them — or, if you untick that option, typed in per entry with
-a running total before you import.
+a running total before you import. The entry description lists the repository, the issue numbers and the commit titles once each — titles are shown without the "#N" and "(fix)" markers that already lead the description.
 
 It is a public tool: anyone can use it with their own GitHub personal
 access token and their own Clockify API key. There is no login, no account,

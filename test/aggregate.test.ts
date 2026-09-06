@@ -172,9 +172,9 @@ describe('aggregate', () => {
     expect(entries[1]?.end).toBe('2026-08-03T17:00:00Z');
     expect(entries[0]?.activityCount).toBe(2);
     expect(entries[1]?.activityCount).toBe(1);
-    expect(entries[0]?.description).toContain('start on #123');
-    expect(entries[0]?.description).toContain('finish #123');
-    expect(entries[0]?.description).not.toContain('work on #124');
+    expect(entries[0]?.description).toContain('start on');
+    expect(entries[0]?.description).toContain('finish');
+    expect(entries[0]?.description).not.toContain('work on');
   });
 
   it('11. activities referencing no issue form a single "other" group on the day, keyed with an empty group', () => {

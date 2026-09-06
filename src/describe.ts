@@ -28,6 +28,16 @@ const ISSUE_REF = /#(\d+)/g;
 /** Anchored at the title start; case-insensitive; original casing captured. */
 const TYPE_PREFIX = /^\((fix|feat)\)/i;
 
+/**
+ * A title as it appears inside the description: without the leading
+ * `(fix)`/`(feat)` marker and without `#N` references, because both are
+ * already emitted once per repo block. Collapses the whitespace left behind.
+ * Returns '' when nothing but markers remained (e.g. a title of "#12").
+ */
+export function cleanTitle(title: string): string {
+  return title.replace(TYPE_PREFIX, '').replace(ISSUE_REF, '').replace(/\s+/g, ' ').trim();
+}
+
 /** Every `#123` reference in `title`, deduped and ascending. */
 export function issueNumbersIn(title: string): number[] {
   const numbers = new Set<number>();
@@ -38,11 +48,12 @@ export function issueNumbersIn(title: string): number[] {
 /**
  * `<ALIAS> [ISSUE #a #b] [(fix) (feat)] title1, title2   |   <ALIAS2> ...`
  *
- * Repo blocks are joined with `' | '` in the order repos first appear in
+ * Titles are cleaned: the leading type marker and every `#N` are removed
+ * (they are already in the segments) and whitespace is collapsed. Repo
+ * blocks are joined with `' | '` in the order repos first appear in
  * `activities`. Within a block: issue numbers are deduped and sorted
- * numerically; types are deduped and sorted; titles are deduped but keep
- * chronological order (by `timestamp`), not the order they appear in
- * `activities` and not alphabetical order.
+ * numerically; types are deduped and sorted; cleaned titles are deduped but
+ * keep chronological order (by `timestamp`).
  */
 export function describeDay(activities: Activity[], aliases: Record<string, string>): string {
   const repoOrder: string[] = [];
@@ -74,9 +85,10 @@ export function describeDay(activities: Activity[], aliases: Record<string, stri
       const typeMatch = TYPE_PREFIX.exec(item.title);
       if (typeMatch?.[1]) types.add(typeMatch[1]);
 
-      if (!seenTitles.has(item.title)) {
-        seenTitles.add(item.title);
-        titles.push(item.title);
+      const cleaned = cleanTitle(item.title);
+      if (cleaned !== '' && !seenTitles.has(cleaned)) {
+        seenTitles.add(cleaned);
+        titles.push(cleaned);
       }
     }
 
@@ -96,7 +108,7 @@ export function describeDay(activities: Activity[], aliases: Record<string, stri
       );
     }
 
-    parts.push(titles.join(', '));
+    if (titles.length > 0) parts.push(titles.join(', '));
 
     return parts.join(' ');
   });
