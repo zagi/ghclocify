@@ -18,6 +18,8 @@
   --color-positive-bg: #e6f4f2;
   --color-danger: #b91c1c;
   --color-danger-bg: #fbeaea;
+  --color-warning: #92400e;
+  --color-warning-bg: #fdf1dc;
   --color-focus: #1d4ed8;
 
   --radius: 6px;
@@ -41,6 +43,8 @@
     --color-positive-bg: #10302c;
     --color-danger: #f87171;
     --color-danger-bg: #3a1717;
+    --color-warning: #f7bb6c;
+    --color-warning-bg: #3a2a12;
     --color-focus: #7aa2ff;
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 16px rgba(0, 0, 0, 0.3);
   }
@@ -70,6 +74,13 @@ img {
   max-width: 100%;
 }
 
+/* `.btn` and `.field-checkbox` set `display`, which beats the UA's
+   `[hidden] { display: none }` — without this reset, hiding them via the
+   `hidden` attribute did nothing. */
+[hidden] {
+  display: none !important;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -91,6 +102,13 @@ img {
   max-width: 46rem;
   margin: 0 auto;
   padding: 2rem 1.25rem 4rem;
+  transition: max-width 200ms ease;
+}
+
+/* The preview table has nine columns; the form-width page clipped Hours and
+   Status off the right edge. Step 4 widens the page instead. */
+.page.is-wide {
+  max-width: 72rem;
 }
 
 /* Masthead */
@@ -198,8 +216,17 @@ img {
   border-color: var(--color-positive);
 }
 
-.stepper-item a:hover {
+.stepper-item a {
+  cursor: default;
+}
+
+.stepper-item.is-complete a {
+  cursor: pointer;
+}
+
+.stepper-item.is-complete a:hover {
   color: var(--color-text);
+  background: var(--color-surface-alt);
 }
 
 .stepper-label {
@@ -326,6 +353,8 @@ select:disabled {
 .field-checkbox label {
   margin: 0;
   font-weight: 500;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .field-checkbox .field-hint {
@@ -530,9 +559,13 @@ th .icon {
 }
 
 .banner-warning {
-  background: var(--color-danger-bg);
-  border-left-color: var(--color-danger);
+  background: var(--color-warning-bg);
+  border-left-color: var(--color-warning);
   color: var(--color-text);
+}
+
+.banner-warning .icon {
+  color: var(--color-warning);
 }
 
 /* Progress */
@@ -551,6 +584,10 @@ th .icon {
   width: 0%;
   background: var(--color-accent);
   transition: width 0.2s ease;
+}
+
+#scan-progress-wrap {
+  margin-top: 1rem;
 }
 
 #scan-status {
@@ -594,16 +631,41 @@ tbody td {
   vertical-align: top;
 }
 
+thead th {
+  white-space: nowrap;
+}
+
+td.date-cell,
+td.day-cell,
+td.issue-cell,
+td.activity-cell,
+td.status-cell {
+  white-space: nowrap;
+}
+
+td.repos-cell {
+  min-width: 11rem;
+}
+
+td.description-cell {
+  min-width: 20rem;
+  max-width: 34rem;
+}
+
+/* The pill stays on one line; the "Existing: …" hint under it may wrap. */
+td.status-cell .field-hint {
+  white-space: normal;
+  min-width: 12rem;
+  max-width: 18rem;
+}
+
 tbody tr:last-child td {
   border-bottom: none;
 }
 
 tbody tr.is-duplicate {
   color: var(--color-text-muted);
-}
-
-tbody tr.is-duplicate td:not(:first-child) {
-  border-left: 2px dashed var(--color-border);
+  background: var(--color-surface-alt);
 }
 
 .duplicate-tag {
@@ -661,7 +723,7 @@ tbody tr.is-duplicate td:not(:first-child) {
 }
 
 .totals-warning {
-  color: var(--color-danger);
+  color: var(--color-warning);
   font-weight: 500;
 }
 
@@ -746,6 +808,15 @@ td.hours-cell {
 
   .panel {
     padding: 1.25rem;
+  }
+
+  .field-row > .field {
+    flex: 1 1 calc(50% - 0.5rem);
+  }
+
+  .masthead .btn {
+    white-space: nowrap;
+    padding-inline: 0.75rem;
   }
 
   .actions-nav {

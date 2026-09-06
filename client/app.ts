@@ -959,6 +959,20 @@ function wireScopeStep(): void {
     invalidateScan();
   });
 
+  // Completed steps in the stepper are links back to that step; the current
+  // and future ones stay inert (the panel would be empty).
+  document.querySelector('.stepper')?.addEventListener('click', (e) => {
+    const link = (e.target as HTMLElement).closest<HTMLAnchorElement>('.stepper-item a');
+    if (!link) return;
+    e.preventDefault();
+    const item = link.closest<HTMLElement>('.stepper-item');
+    const target = Number(item?.dataset.step);
+    if (!item?.classList.contains('is-complete') || !(target >= 1 && target <= 3)) return;
+    store.update((s) => {
+      s.step = target as 1 | 2 | 3;
+    });
+  });
+
   qs('scope-back').addEventListener('click', () => {
     store.update((s) => {
       s.step = 1;
