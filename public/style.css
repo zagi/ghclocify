@@ -169,24 +169,37 @@ img {
   background: var(--color-surface-alt);
 }
 
-.stepper-item.is-complete .stepper-num {
+.stepper-badge {
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.75;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease;
+}
+
+.stepper-item.is-current .stepper-badge {
+  opacity: 1;
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.stepper-item.is-complete .stepper-badge {
+  opacity: 1;
   background: var(--color-positive);
   color: var(--color-accent-contrast);
   border-color: var(--color-positive);
 }
 
-.stepper-num {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  font-weight: 700;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  width: 1.6rem;
-  height: 1.6rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+.stepper-item a:hover {
+  color: var(--color-text);
 }
 
 .stepper-label {
@@ -304,6 +317,7 @@ select:disabled {
 
 .field-checkbox {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.45rem;
   margin-bottom: 0.5rem;
@@ -685,6 +699,33 @@ td.hours-cell {
 
 .site-footer p {
   margin: 0;
+}
+
+.site-footer-meta {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem 0.5rem;
+}
+
+.site-footer a {
+  color: var(--color-text);
+  text-decoration-color: var(--color-border);
+  text-underline-offset: 0.15em;
+}
+
+.site-footer a:hover {
+  color: var(--color-accent);
+  text-decoration-color: currentColor;
+}
+
+.site-footer a .icon {
+  margin-right: 0.25rem;
+}
+
+.coffee-link {
+  color: var(--color-accent);
 }
 
 /* Small screens */

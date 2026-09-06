@@ -37,27 +37,32 @@ export function setButtonLabel(button: HTMLButtonElement, name: IconName, text: 
   );
 }
 
-/** Sets the static (never re-rendered) icons: the stepper numbers, the nav
+/** Sets the static (never re-rendered) icons: the nav
  *  buttons whose label doesn't change across renders, the preview table's
  *  Issue/Hours column headers, and the alert icon inside the two warning
  *  banners. Called once from app.ts's `init()`, before the first `render()`. */
+const STEP_ICONS: Record<number, IconName> = {
+  1: 'connect',
+  2: 'filter',
+  3: 'mapping',
+  4: 'upload',
+};
+
+/** The stepper badge shows the step's icon, or a check once the step is
+ *  complete. The visible number was dropped: the badge is only 1.6rem wide and
+ *  an icon and "01" could not share it. A `Step N:` prefix stays for screen
+ *  readers as the badge's first child. */
+function renderStepBadge(item: HTMLElement, complete: boolean): void {
+  const badge = item.querySelector<HTMLElement>('.stepper-badge');
+  if (!badge) return;
+  const wanted = complete ? 'success' : STEP_ICONS[Number(item.dataset.step)];
+  if (!wanted || badge.dataset.icon === wanted) return;
+  badge.dataset.icon = wanted;
+  badge.querySelector('svg')?.remove();
+  badge.append(icon(wanted, { size: 14 }));
+}
+
 export function renderStaticIcons(): void {
-  const stepIcons: Record<string, IconName> = {
-    '1': 'connect',
-    '2': 'filter',
-    '3': 'mapping',
-    '4': 'upload',
-  };
-  for (const [step, name] of Object.entries(stepIcons)) {
-    const num = document.querySelector<HTMLElement>(
-      `.stepper-item[data-step="${step}"] .stepper-num`,
-    );
-    if (num)
-      num.replaceChildren(
-        icon(name, { size: 14 }),
-        document.createTextNode(` ${num.textContent?.trim() ?? ''}`),
-      );
-  }
   setButtonLabel(el('connect-continue') as HTMLButtonElement, 'next', 'Continue to scope');
   setButtonLabel(el('scope-back') as HTMLButtonElement, 'back', 'Back');
   setButtonLabel(el('scope-continue') as HTMLButtonElement, 'next', 'Continue to mapping');
@@ -71,6 +76,8 @@ export function renderStaticIcons(): void {
   if (planWarningP) planWarningP.prepend(icon('alert'));
   const dupWarningP = document.querySelector<HTMLElement>('#duplicate-check-warning p');
   if (dupWarningP) dupWarningP.prepend(icon('alert'));
+  el('coffee-link').prepend(icon('coffee', { size: 14 }));
+  el('source-link').prepend(icon('code', { size: 14 }));
 }
 
 const WEEKDAY_FMT = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'UTC' });
@@ -93,6 +100,7 @@ export function renderStepper(state: State): void {
     const link = item.querySelector('a');
     item.classList.toggle('is-current', step === state.step);
     item.classList.toggle('is-complete', step < state.step);
+    renderStepBadge(item, step < state.step);
     if (link) {
       if (step === state.step) link.setAttribute('aria-current', 'step');
       else link.removeAttribute('aria-current');
