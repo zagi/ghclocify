@@ -695,6 +695,13 @@ tbody tr.is-imported {
   background: var(--color-positive-bg);
 }
 
+/* An imported row can also carry .is-duplicate after the post-import
+   re-check (it now matches an existing entry) — keep full-contrast text
+   instead of the muted duplicate color. */
+tbody tr.is-imported {
+  color: var(--color-text);
+}
+
 /* Without this the "Imported" pill's own status-success background (also
    --color-positive-bg) is indistinguishable from the row tint it sits on. */
 tr.is-imported .status-pill.status-success {

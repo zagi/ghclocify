@@ -216,12 +216,22 @@ function recomputePlan(): void {
       warnings: s.scan.warnings,
     });
 
+    // A row whose last import attempt failed (e.g. a same-day sibling wrote
+    // successfully and flipped this entry's status new -> duplicate on the
+    // post-import re-check) must stay checked so the one-click retry isn't
+    // silently lost.
+    const failedKeys = new Set(s.importing.results.filter((r) => !r.ok).map((r) => r.key));
     const nextChecked = new Set<string>();
     const liveKeys = new Set<string>();
     for (const entry of plan.entries) {
       liveKeys.add(entry.key);
       const previousEntry = previousPlan?.entries.find((e) => e.key === entry.key);
-      if (previousEntry && previousEntry.status === entry.status && s.checkedKeys.has(entry.key)) {
+      const statusUnchanged = previousEntry && previousEntry.status === entry.status;
+      if (
+        previousEntry &&
+        s.checkedKeys.has(entry.key) &&
+        (statusUnchanged || failedKeys.has(entry.key))
+      ) {
         nextChecked.add(entry.key);
       } else if (!previousEntry && entry.status === 'new') {
         nextChecked.add(entry.key);
