@@ -9,6 +9,7 @@
   --color-surface: #ffffff;
   --color-surface-alt: #eeece4;
   --color-border: #d8d3c4;
+  --color-border-strong: #8f8774;
   --color-text: #1b1f24;
   --color-text-muted: #5b5748;
   --color-accent: #b45309;
@@ -34,6 +35,7 @@
     --color-surface: #1b1f26;
     --color-surface-alt: #242933;
     --color-border: #333a46;
+    --color-border-strong: #64707f;
     --color-text: #f0ede6;
     --color-text-muted: #a8a296;
     --color-accent: #f0a848;
@@ -332,7 +334,7 @@ select {
   font: inherit;
   color: var(--color-text);
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
   padding: 0.5rem 0.65rem;
 }
@@ -402,7 +404,7 @@ input[type='radio'] {
   padding: 0;
   max-height: 14rem;
   overflow-y: auto;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
 }
 
@@ -448,7 +450,6 @@ input[type='radio'] {
 
 .btn:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
 }
 
 .btn-primary {
@@ -460,14 +461,24 @@ input[type='radio'] {
   background: var(--color-accent-strong);
 }
 
+.btn-primary:disabled {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--color-text);
-  border-color: var(--color-border);
+  border-color: var(--color-border-strong);
 }
 
 .btn-ghost:hover:not(:disabled) {
   background: var(--color-surface-alt);
+}
+
+.btn-ghost:disabled {
+  opacity: 0.55;
 }
 
 .actions {

@@ -14,6 +14,7 @@ export default defineConfig({
             'test/plan.test.ts',
             'test/validate.test.ts',
             'test/hours.test.ts',
+            'test/contrast.test.ts',
           ],
           environment: 'node',
         },
