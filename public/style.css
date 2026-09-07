@@ -9,6 +9,7 @@
   --color-surface: #ffffff;
   --color-surface-alt: #eeece4;
   --color-border: #d8d3c4;
+  --color-border-strong: #8f8774;
   --color-text: #1b1f24;
   --color-text-muted: #5b5748;
   --color-accent: #b45309;
@@ -34,6 +35,7 @@
     --color-surface: #1b1f26;
     --color-surface-alt: #242933;
     --color-border: #333a46;
+    --color-border-strong: #6b7787;
     --color-text: #f0ede6;
     --color-text-muted: #a8a296;
     --color-accent: #f0a848;
@@ -258,16 +260,6 @@ img {
   max-width: 38rem;
 }
 
-.note {
-  margin: 0 0 1.5rem;
-  padding: 0.6rem 0.85rem;
-  border-left: 3px solid var(--color-accent);
-  background: var(--color-surface-alt);
-  border-radius: 0 var(--radius) var(--radius) 0;
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-}
-
 /* Forms */
 
 fieldset {
@@ -332,9 +324,16 @@ select {
   font: inherit;
   color: var(--color-text);
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
   padding: 0.5rem 0.65rem;
+}
+
+input.is-derived {
+  background: var(--color-surface-alt);
+  border-color: var(--color-text-muted);
+  border-style: dashed;
+  cursor: default;
 }
 
 input:disabled,
@@ -402,8 +401,18 @@ input[type='radio'] {
   padding: 0;
   max-height: 14rem;
   overflow-y: auto;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
+}
+
+.repo-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.repo-list::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 999px;
+  border: 2px solid var(--color-surface);
 }
 
 .repo-list li {
@@ -448,7 +457,6 @@ input[type='radio'] {
 
 .btn:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
 }
 
 .btn-primary {
@@ -460,14 +468,24 @@ input[type='radio'] {
   background: var(--color-accent-strong);
 }
 
+.btn-primary:disabled {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--color-text);
-  border-color: var(--color-border);
+  border-color: var(--color-border-strong);
 }
 
 .btn-ghost:hover:not(:disabled) {
   background: var(--color-surface-alt);
+}
+
+.btn-ghost:disabled {
+  opacity: 0.55;
 }
 
 .actions {
@@ -507,6 +525,7 @@ th .icon {
 
 .result-card {
   margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
   padding: 1rem 1.1rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -644,12 +663,16 @@ td.status-cell {
 }
 
 td.repos-cell {
-  min-width: 11rem;
+  min-width: 10rem;
 }
 
 td.description-cell {
-  min-width: 20rem;
-  max-width: 34rem;
+  min-width: 18rem;
+  max-width: 28rem;
+}
+
+td.status-cell {
+  min-width: 8.5rem;
 }
 
 /* The pill stays on one line; the "Existing: …" hint under it may wrap. */
@@ -666,6 +689,23 @@ tbody tr:last-child td {
 tbody tr.is-duplicate {
   color: var(--color-text-muted);
   background: var(--color-surface-alt);
+}
+
+tbody tr.is-imported {
+  background: var(--color-positive-bg);
+}
+
+/* An imported row can also carry .is-duplicate after the post-import
+   re-check (it now matches an existing entry) — keep full-contrast text
+   instead of the muted duplicate color. */
+tbody tr.is-imported {
+  color: var(--color-text);
+}
+
+/* Without this the "Imported" pill's own status-success background (also
+   --color-positive-bg) is indistinguishable from the row tint it sits on. */
+tr.is-imported .status-pill.status-success {
+  background: var(--color-surface);
 }
 
 .duplicate-tag {
@@ -792,20 +832,18 @@ td.hours-cell {
 
 /* Small screens */
 
+.toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 50;
+  max-width: min(22rem, calc(100vw - 2rem));
+}
+
 @media (max-width: 640px) {
-  .stepper ol {
-    flex-direction: column;
-  }
-
-  .stepper-item {
-    border-right: none;
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .stepper-item:last-child {
-    border-bottom: none;
-  }
-
   .panel {
     padding: 1.25rem;
   }
@@ -827,17 +865,157 @@ td.hours-cell {
   .actions-nav .btn-primary {
     margin-left: 0;
   }
-}
 
-.toasts {
-  position: fixed;
-  right: 1rem;
-  bottom: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  z-index: 50;
-  max-width: min(22rem, calc(100vw - 2rem));
+  /* Preview as cards: the nine-column table cannot fit a phone. */
+  .page.is-wide {
+    max-width: 46rem;
+  }
+
+  #preview-table-wrap thead,
+  #preview-table-wrap thead tr,
+  #preview-table-wrap thead th:first-child {
+    display: block;
+  }
+  #preview-table-wrap thead th:not(:first-child) {
+    display: none;
+  }
+  #preview-table-wrap thead th:first-child {
+    position: static;
+    padding: 0.55rem 0.65rem;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+  #preview-table-wrap thead th:first-child::after {
+    content: 'Select all';
+    font-family: var(--font-sans);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--color-text);
+  }
+
+  #preview-table-wrap tbody tr {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    grid-template-areas:
+      'check date status'
+      'check issue hours'
+      'check repos repos'
+      'check desc desc';
+    gap: 0.15rem 0.6rem;
+    padding: 0.6rem 0.65rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  #preview-table-wrap tbody td {
+    display: block;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    min-width: 0;
+    max-width: none;
+  }
+
+  #preview-table-wrap tbody td:first-child {
+    grid-area: check;
+    align-self: start;
+  }
+  #preview-table-wrap td.date-cell {
+    grid-area: date;
+    font-weight: 600;
+  }
+  #preview-table-wrap td.day-cell,
+  #preview-table-wrap td.activity-cell {
+    display: none;
+  }
+  #preview-table-wrap td.status-cell {
+    grid-area: status;
+    justify-self: end;
+  }
+  #preview-table-wrap td.issue-cell {
+    grid-area: issue;
+  }
+  #preview-table-wrap td.hours-cell {
+    grid-area: hours;
+    justify-self: end;
+    text-align: right;
+  }
+  #preview-table-wrap td.repos-cell {
+    grid-area: repos;
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+  }
+  #preview-table-wrap td.description-cell {
+    grid-area: desc;
+  }
+  #preview-table-wrap td.repos-cell::before,
+  #preview-table-wrap td.description-cell::before,
+  #preview-table-wrap td.issue-cell::before,
+  #preview-table-wrap td.hours-cell::before {
+    content: attr(data-label) ': ';
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+  #preview-table-wrap td.status-cell .field-hint {
+    min-width: 0;
+    max-width: none;
+  }
+  #preview-table-wrap td.table-empty {
+    grid-column: 1 / -1;
+  }
+
+  .toasts {
+    top: 0.75rem;
+    bottom: auto;
+    left: 1rem;
+    right: 1rem;
+    max-width: none;
+  }
+
+  /* One row of badges; only the current step keeps its label. */
+  .stepper ol {
+    flex-direction: row;
+  }
+  .stepper-item {
+    flex: 0 0 auto;
+    border-bottom: none;
+    border-right: 1px solid var(--color-border);
+  }
+  .stepper-item.is-current {
+    flex: 1 1 auto;
+  }
+  .stepper-item:last-child {
+    border-right: none;
+  }
+  .stepper-item a {
+    position: relative;
+    padding: 0.6rem 0.65rem;
+    justify-content: center;
+  }
+  .stepper-item.is-current a {
+    justify-content: flex-start;
+  }
+  .stepper-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+  .stepper-item.is-current .stepper-label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
 }
 .toast {
   display: flex;

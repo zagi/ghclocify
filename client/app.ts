@@ -41,7 +41,7 @@ import {
 } from './notify';
 import { aggregate } from '../src/aggregate';
 import { APPLY_CHUNK } from '../src/hours';
-import { buildPlan, overflowingDates } from '../src/plan';
+import { buildPlan, overflowingDates, planFingerprint } from '../src/plan';
 import { dayKey, isValidTimezone, utcOffsetLabel, utcRangeForLocalDays } from '../src/timezone';
 import type { Activity, ImportSettings, ProposedEntry } from '../src/types';
 
@@ -216,12 +216,22 @@ function recomputePlan(): void {
       warnings: s.scan.warnings,
     });
 
+    // A row whose last import attempt failed (e.g. a same-day sibling wrote
+    // successfully and flipped this entry's status new -> duplicate on the
+    // post-import re-check) must stay checked so the one-click retry isn't
+    // silently lost.
+    const failedKeys = new Set(s.importing.results.filter((r) => !r.ok).map((r) => r.key));
     const nextChecked = new Set<string>();
     const liveKeys = new Set<string>();
     for (const entry of plan.entries) {
       liveKeys.add(entry.key);
       const previousEntry = previousPlan?.entries.find((e) => e.key === entry.key);
-      if (previousEntry && previousEntry.status === entry.status && s.checkedKeys.has(entry.key)) {
+      const statusUnchanged = previousEntry && previousEntry.status === entry.status;
+      if (
+        previousEntry &&
+        s.checkedKeys.has(entry.key) &&
+        (statusUnchanged || failedKeys.has(entry.key))
+      ) {
         nextChecked.add(entry.key);
       } else if (!previousEntry && entry.status === 'new') {
         nextChecked.add(entry.key);
@@ -233,6 +243,18 @@ function recomputePlan(): void {
     const nextHours: Record<string, number> = {};
     for (const [key, hours] of Object.entries(s.entryHours)) {
       if (liveKeys.has(key)) nextHours[key] = hours;
+    }
+
+    // A changed fingerprint (different hours, project, split, timezone, …)
+    // means the previous `importing.results` no longer describe what this
+    // plan would write — stale "Imported"/"Failed" pills would be lying.
+    // Never touch it while a batch is actually in flight.
+    if (
+      s.importing.status !== 'running' &&
+      previousPlan &&
+      planFingerprint(previousPlan.entries) !== planFingerprint(plan.entries)
+    ) {
+      s.importing = { status: 'idle', results: [], total: 0, completed: 0, stopRequested: false };
     }
 
     s.plan = plan;
@@ -257,6 +279,7 @@ function invalidateScan(): void {
     s.plan = null;
     s.checkedKeys = new Set();
     s.entryHours = {};
+    s.importing = { status: 'idle', results: [], total: 0, completed: 0, stopRequested: false };
   });
 }
 
@@ -318,7 +341,7 @@ async function handleVerify(): Promise<void> {
     toaster.push({
       kind: 'success',
       title: 'Connected',
-      message: `${ghResult.value.viewer.login} · ${cfResult.value.user.name}`,
+      message: `GitHub: ${ghResult.value.viewer.login} · Clockify: ${cfResult.value.user.name}`,
     });
   }
 }
@@ -349,6 +372,7 @@ async function loadRepos(): Promise<void> {
       s.scope.reposError = message;
     });
     toaster.push({ kind: 'error', title: "Couldn't load repositories", message });
+    announce(`Couldn't load repositories: ${message}`);
   }
 }
 
@@ -383,6 +407,7 @@ async function loadProjects(): Promise<void> {
       s.mapping.projectsError = message;
     });
     toaster.push({ kind: 'error', title: "Couldn't load projects", message });
+    announce(`Couldn't load projects: ${message}`);
   }
 }
 
@@ -590,10 +615,13 @@ async function runImport(): Promise<void> {
   // state, this is the belt to that brace.
   if (overflowingDates(checked, s0.prefs.timezone).length > 0) return;
 
+  // Keep results for keys not being retried this run — a retry of only the
+  // failed rows must not erase the earlier successes' "Imported" pills.
+  const retried = new Set(checked.map((e) => e.key));
   store.update((s) => {
     s.importing = {
       status: 'running',
-      results: [],
+      results: s.importing.results.filter((r) => !retried.has(r.key)),
       total: checked.length,
       completed: 0,
       stopRequested: false,
@@ -662,9 +690,33 @@ async function runImport(): Promise<void> {
     }
   }
 
+  const stopped = store.getState().importing.stopRequested;
+
   store.update((s) => {
     s.importing.status = 'done';
+    // Imported and already-existing entries are done; only failures stay
+    // selected, so the next click on "Import" retries exactly those.
+    const next = new Set(s.checkedKeys);
+    for (const r of s.importing.results) if (r.ok) next.delete(r.key);
+    s.checkedKeys = next;
   });
+
+  // Force a re-fetch of existing entries so the plan itself becomes
+  // truthful: imported rows flip to `duplicate`, failed rows stay `new`.
+  store.update((s) => {
+    s.existingEntriesFingerprint = null;
+  });
+  await loadExistingEntriesAndRecompute();
+
+  if (stopped) {
+    const { completed, total } = store.getState().importing;
+    const message = `${completed} of ${total} written`;
+    announce(`Import stopped: ${message}`);
+    toaster.push({ kind: 'warning', title: 'Import stopped', message });
+    if (store.getState().prefs.notifyWhenDone) notifyIfHidden('Import stopped', message);
+    return;
+  }
+
   announce('Import finished.');
 
   const results = store.getState().importing.results;
@@ -706,11 +758,17 @@ function initFormFromState(): void {
     });
     startInput.value = range.start;
     endInput.value = range.end;
-    startInput.disabled = true;
-    endInput.disabled = true;
+    startInput.readOnly = true;
+    endInput.readOnly = true;
+    startInput.classList.add('is-derived');
+    endInput.classList.add('is-derived');
   } else {
     startInput.value = s.prefs.startDate;
     endInput.value = s.prefs.endDate;
+    startInput.readOnly = false;
+    endInput.readOnly = false;
+    startInput.classList.remove('is-derived');
+    endInput.classList.remove('is-derived');
   }
 
   qs<HTMLInputElement>('source-commits').checked = s.prefs.sources.commits;
@@ -859,11 +917,15 @@ function wireScopeStep(): void {
       if (range) {
         startInput.value = range.start;
         endInput.value = range.end;
-        startInput.disabled = true;
-        endInput.disabled = true;
+        startInput.readOnly = true;
+        endInput.readOnly = true;
+        startInput.classList.add('is-derived');
+        endInput.classList.add('is-derived');
       } else {
-        startInput.disabled = false;
-        endInput.disabled = false;
+        startInput.readOnly = false;
+        endInput.readOnly = false;
+        startInput.classList.remove('is-derived');
+        endInput.classList.remove('is-derived');
       }
       store.update((s) => {
         s.prefs.datePreset = preset;
@@ -876,6 +938,7 @@ function wireScopeStep(): void {
   }
 
   qs<HTMLInputElement>('scope-start').addEventListener('change', (e) => {
+    if ((e.target as HTMLInputElement).readOnly) return;
     const value = (e.target as HTMLInputElement).value;
     store.update((s) => {
       s.prefs.startDate = value;
@@ -884,6 +947,7 @@ function wireScopeStep(): void {
     invalidateScan();
   });
   qs<HTMLInputElement>('scope-end').addEventListener('change', (e) => {
+    if ((e.target as HTMLInputElement).readOnly) return;
     const value = (e.target as HTMLInputElement).value;
     store.update((s) => {
       s.prefs.endDate = value;
@@ -1003,6 +1067,7 @@ function wireMappingStep(): void {
       s.existingEntries = [];
       s.existingEntriesFingerprint = null;
       s.existingEntriesError = null;
+      s.importing = { status: 'idle', results: [], total: 0, completed: 0, stopRequested: false };
     });
     savePrefs(store.getState().prefs);
     void loadProjects();
@@ -1140,6 +1205,9 @@ function wirePreviewStep(): void {
           title: 'Notifications are blocked',
           message: 'Allow notifications for this site in your browser settings to use this.',
         });
+        announce(
+          'Notifications are blocked: Allow notifications for this site in your browser settings to use this.',
+        );
       }
       store.update((s) => {
         s.prefs.notifyWhenDone = granted;

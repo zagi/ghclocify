@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildPlan, decideWrite, findDuplicate, findLanded, overflowingDates } from '../src/plan';
+import {
+  buildPlan,
+  decideWrite,
+  findDuplicate,
+  findLanded,
+  overflowingDates,
+  planFingerprint,
+} from '../src/plan';
 import type { ExistingEntry, ProposedEntry } from '../src/types';
 
 function proposed(overrides: Partial<ProposedEntry> = {}): ProposedEntry {
@@ -382,5 +389,35 @@ describe('buildPlan', () => {
       reason: 'overlap',
       existing: runningTimer,
     });
+  });
+});
+
+describe('planFingerprint', () => {
+  it('22. the same entries produce the same fingerprint', () => {
+    const entries = [proposed(), proposed({ date: '2026-08-04', key: '2026-08-04|acme/demo#2' })];
+    expect(planFingerprint(entries)).toBe(planFingerprint(entries));
+    expect(planFingerprint(entries)).toBe(planFingerprint([...entries]));
+  });
+
+  it('23. a changed end produces a different fingerprint', () => {
+    const base = [proposed()];
+    const changed = [proposed({ end: '2026-08-03T18:00:00Z' })];
+    expect(planFingerprint(base)).not.toBe(planFingerprint(changed));
+  });
+
+  it('24. a changed projectId produces a different fingerprint', () => {
+    const base = [proposed()];
+    const changed = [proposed({ projectId: 'proj2' })];
+    expect(planFingerprint(base)).not.toBe(planFingerprint(changed));
+  });
+
+  it('25. a changed start produces a different fingerprint', () => {
+    const base = [proposed()];
+    const changed = [proposed({ start: '2026-08-03T10:00:00Z' })];
+    expect(planFingerprint(base)).not.toBe(planFingerprint(changed));
+  });
+
+  it('26. an empty plan has a stable, defined fingerprint', () => {
+    expect(planFingerprint([])).toBe(planFingerprint([]));
   });
 });

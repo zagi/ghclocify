@@ -16,7 +16,7 @@
 import { groupLabel } from '../src/aggregate';
 import { APPLY_CHUNK, estimateImport, formatDuration, freeTierHours } from '../src/hours';
 import { overflowingDates } from '../src/plan';
-import type { PlannedEntry } from '../src/types';
+import type { ApplyResult, PlannedEntry } from '../src/types';
 import { icon, type IconName } from './icons';
 import type { State } from './state';
 
@@ -67,7 +67,7 @@ export function renderStaticIcons(): void {
   setButtonLabel(el('scope-back') as HTMLButtonElement, 'back', 'Back');
   setButtonLabel(el('scope-continue') as HTMLButtonElement, 'next', 'Continue to mapping');
   setButtonLabel(el('mapping-back') as HTMLButtonElement, 'back', 'Back');
-  setButtonLabel(el('mapping-continue') as HTMLButtonElement, 'filter', 'Scan activity');
+  setButtonLabel(el('mapping-continue') as HTMLButtonElement, 'scan', 'Scan activity');
   const issueTh = document.querySelector<HTMLElement>('#preview-table-wrap th[data-col="issue"]');
   if (issueTh) issueTh.prepend(icon('hash', { size: 12 }));
   const hoursTh = document.querySelector<HTMLElement>('#preview-table-wrap th[data-col="hours"]');
@@ -212,6 +212,7 @@ export function renderRepoList(state: State): void {
   const list = el('repo-list');
   const { repos, reposLoading, reposError, repoFilter } = state.scope;
   const selected = new Set(state.prefs.selectedRepos);
+  const count = el('repo-count');
 
   list.innerHTML = '';
 
@@ -221,6 +222,7 @@ export function renderRepoList(state: State): void {
     li.id = 'repo-list-empty';
     li.textContent = 'Loading repositories…';
     list.appendChild(li);
+    count.hidden = true;
     return;
   }
 
@@ -230,6 +232,7 @@ export function renderRepoList(state: State): void {
     li.id = 'repo-list-empty';
     li.textContent = reposError;
     list.appendChild(li);
+    count.hidden = true;
     return;
   }
 
@@ -239,6 +242,7 @@ export function renderRepoList(state: State): void {
     li.id = 'repo-list-empty';
     li.textContent = 'Verify your connection to load repositories.';
     list.appendChild(li);
+    count.hidden = true;
     return;
   }
 
@@ -246,6 +250,12 @@ export function renderRepoList(state: State): void {
   const visible = needle ? repos.filter((r) => r.fullName.toLowerCase().includes(needle)) : repos;
   const allVisibleSelected = visible.length > 0 && visible.every((r) => selected.has(r.fullName));
   setText('repo-select-all', allVisibleSelected ? 'Deselect all' : 'Select all');
+
+  count.hidden = false;
+  const selectedCount = state.prefs.selectedRepos.length;
+  count.textContent = needle
+    ? `${visible.length} of ${repos.length} match "${repoFilter.trim()}" · ${selectedCount} selected`
+    : `${repos.length} ${repos.length === 1 ? 'repository' : 'repositories'} · ${selectedCount} selected`;
 
   if (visible.length === 0) {
     const li = document.createElement('li');
@@ -404,7 +414,9 @@ export function renderScanProgress(state: State): void {
   if (state.existingEntriesError) {
     dupWarning.hidden = false;
     const span = dupWarning.querySelector('.banner-text');
-    if (span) span.textContent = state.existingEntriesError;
+    if (span && span.textContent !== state.existingEntriesError) {
+      span.textContent = state.existingEntriesError;
+    }
   } else {
     dupWarning.hidden = true;
   }
@@ -448,6 +460,30 @@ export function renderScanProgress(state: State): void {
 }
 
 // ---- step 4: preview table ----
+
+/** The last apply result for an entry key, if the current import touched it. */
+function latestResultFor(state: State, key: string): ApplyResult | undefined {
+  const { results } = state.importing;
+  for (let i = results.length - 1; i >= 0; i -= 1) {
+    if (results[i]?.key === key) return results[i];
+  }
+  return undefined;
+}
+
+function resultPill(result: ApplyResult): HTMLElement {
+  const span = document.createElement('span');
+  if (result.ok && !result.skipped) {
+    span.className = 'status-pill status-success';
+    span.append(icon('success', { size: 12 }), document.createTextNode('Imported'));
+  } else if (result.skipped) {
+    span.className = 'status-pill status-pending';
+    span.append(icon('copy', { size: 12 }), document.createTextNode('Already exists'));
+  } else {
+    span.className = 'status-pill status-error';
+    span.append(icon('alert', { size: 12 }), document.createTextNode('Failed'));
+  }
+  return span;
+}
 
 function statusPill(status: PlannedEntry['status']): HTMLElement {
   const span = document.createElement('span');
@@ -605,36 +641,43 @@ export function renderPreviewTable(state: State): void {
 
     const dateTd = document.createElement('td');
     dateTd.className = 'date-cell';
+    dateTd.dataset.label = 'Date';
     dateTd.textContent = entry.date;
     tr.appendChild(dateTd);
 
     const dayTd = document.createElement('td');
     dayTd.className = 'day-cell';
+    dayTd.dataset.label = 'Day';
     dayTd.textContent = weekdayLabel(entry.date);
     tr.appendChild(dayTd);
 
     const issueTd = document.createElement('td');
     issueTd.className = 'issue-cell';
+    issueTd.dataset.label = 'Issue';
     issueTd.textContent = groupLabel(entry.group);
     tr.appendChild(issueTd);
 
     const activityTd = document.createElement('td');
     activityTd.className = 'activity-cell';
+    activityTd.dataset.label = 'Activity';
     activityTd.textContent = `${entry.activityCount} ${entry.activityCount === 1 ? 'activity' : 'activities'}`;
     tr.appendChild(activityTd);
 
     const reposTd = document.createElement('td');
     reposTd.className = 'repos-cell';
+    reposTd.dataset.label = 'Repositories';
     reposTd.textContent = entry.repos.join(', ');
     tr.appendChild(reposTd);
 
     const descTd = document.createElement('td');
     descTd.className = 'description-cell';
+    descTd.dataset.label = 'Description';
     descTd.textContent = entry.description;
     tr.appendChild(descTd);
 
     const hoursTd = document.createElement('td');
     hoursTd.className = 'hours-cell';
+    hoursTd.dataset.label = 'Hours';
     if (state.prefs.splitEvenly) {
       hoursTd.textContent = hoursOf(entry).toFixed(2);
     } else {
@@ -653,8 +696,21 @@ export function renderPreviewTable(state: State): void {
 
     const statusTd = document.createElement('td');
     statusTd.className = 'status-cell';
-    statusTd.appendChild(statusPill(entry.status));
-    if (entry.status === 'duplicate' && entry.existing) {
+    statusTd.dataset.label = 'Status';
+    const result = latestResultFor(state, entry.key);
+    if (result) {
+      statusTd.appendChild(resultPill(result));
+      if (result.ok && !result.skipped) tr.classList.add('is-imported');
+      if (!result.ok && result.error) {
+        const errorP = document.createElement('div');
+        errorP.className = 'field-hint';
+        errorP.textContent = result.error;
+        statusTd.appendChild(errorP);
+      }
+    } else {
+      statusTd.appendChild(statusPill(entry.status));
+    }
+    if (!result && entry.status === 'duplicate' && entry.existing) {
       const existingP = document.createElement('div');
       existingP.className = 'field-hint';
       existingP.textContent = `Existing: ${entry.existing.description || '(no description)'}`;
@@ -715,7 +771,13 @@ export function renderPreviewTable(state: State): void {
     );
   } else {
     importBtn.disabled = selectedCount === 0 || overflow.length > 0;
-    setButtonLabel(importBtn, 'upload', 'Import entries');
+    setButtonLabel(
+      importBtn,
+      'upload',
+      selectedCount === 0
+        ? 'Import entries'
+        : `Import ${selectedCount} ${selectedCount === 1 ? 'entry' : 'entries'}`,
+    );
   }
 
   const previewBack = el('preview-back') as HTMLButtonElement;

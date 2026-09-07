@@ -28,7 +28,7 @@ describe('describeDay', () => {
       act({ repo: 'acme/dp', title: 'bump deps #9', timestamp: '2026-08-03T10:00:00Z' }),
     ];
     expect(describeDay(activities, { 'acme/dp': 'DP' })).toBe(
-      'DP ISSUE #9 #185 (fix) (fix) resolve login redirect #185, bump deps #9',
+      'DP ISSUE #9 #185 (fix) resolve login redirect, bump deps',
     );
   });
 
@@ -38,9 +38,7 @@ describe('describeDay', () => {
       act({ repo: 'acme/dp', title: 'work on #9', timestamp: '2026-08-03T10:00:00Z' }),
       act({ repo: 'acme/dp', title: 'work on #185', timestamp: '2026-08-03T11:00:00Z' }),
     ];
-    expect(describeDay(activities, { 'acme/dp': 'DP' })).toBe(
-      'DP ISSUE #9 #10 #185 work on #10, work on #9, work on #185',
-    );
+    expect(describeDay(activities, { 'acme/dp': 'DP' })).toBe('DP ISSUE #9 #10 #185 work on');
   });
 
   it('keeps titles in chronological order, not alphabetical or input order', () => {
@@ -88,7 +86,7 @@ describe('describeDay', () => {
       act({ repo: 'acme/dp', title: '(feat) add sso support', timestamp: '2026-08-03T10:00:00Z' }),
     ];
     expect(describeDay(activities, { 'acme/dp': 'DP' })).toBe(
-      'DP (feat) (fix) (fix) resolve login redirect, (feat) add sso support',
+      'DP (feat) (fix) resolve login redirect, add sso support',
     );
   });
 
@@ -102,8 +100,30 @@ describe('describeDay', () => {
       act({ repo: 'acme/dp', title: '(Fix) bump deps', timestamp: '2026-08-03T10:00:00Z' }),
     ];
     expect(describeDay(activities, { 'acme/dp': 'DP' })).toBe(
-      'DP (Fix) (fix) (fix) resolve login redirect, (Fix) bump deps',
+      'DP (Fix) (fix) resolve login redirect, bump deps',
     );
+  });
+
+  it('strips the type prefix and #N references from titles, keeping inner words and punctuation', () => {
+    const activities: Activity[] = [
+      act({
+        repo: 'acme/dp',
+        title: '(feat) add per-issue split #34 in the preview table #12',
+        timestamp: '2026-08-03T09:00:00Z',
+      }),
+      act({ repo: 'acme/dp', title: '#12', timestamp: '2026-08-03T10:00:00Z' }),
+    ];
+    expect(describeDay(activities, { 'acme/dp': 'DP' })).toBe(
+      'DP ISSUE #12 #34 (feat) add per-issue split in the preview table',
+    );
+  });
+
+  it('dedupes titles after cleaning, not before', () => {
+    const activities: Activity[] = [
+      act({ repo: 'acme/dp', title: '(fix) same work #1', timestamp: '2026-08-03T09:00:00Z' }),
+      act({ repo: 'acme/dp', title: 'same work #2', timestamp: '2026-08-03T10:00:00Z' }),
+    ];
+    expect(describeDay(activities, { 'acme/dp': 'DP' })).toBe('DP ISSUE #1 #2 (fix) same work');
   });
 });
 

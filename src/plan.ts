@@ -121,6 +121,19 @@ export function overflowingDates(entries: ProposedEntry[], timezone: string): st
 }
 
 /**
+ * A short, stable fingerprint of the fields that determine what an import
+ * would actually write: `key` (identity), `start`/`end` (the hours), and
+ * `projectId` (the destination). Two plans with the same fingerprint would
+ * produce identical Clockify writes; a changed fingerprint means the
+ * `importing` results from before are no longer trustworthy against the
+ * current plan and should be discarded (see `recomputePlan`/`invalidateScan`
+ * in client/app.ts).
+ */
+export function planFingerprint(entries: ProposedEntry[]): string {
+  return entries.map((e) => `${e.key}|${e.start}|${e.end}|${e.projectId}`).join('\n');
+}
+
+/**
  * Build the full import plan: every proposed entry tagged `new` or
  * `duplicate` (rule 4, with `existing` populated on duplicates), plus
  * totals and the pass-through `skipped`/`warnings` from the caller.

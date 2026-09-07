@@ -78,7 +78,7 @@
       <main>
         <!-- Step 1: Connect -->
         <section id="step-connect" class="panel" aria-labelledby="step-connect-heading">
-          <h2 id="step-connect-heading">1. Connect</h2>
+          <h2 id="step-connect-heading">Connect</h2>
           <p class="panel-intro">
             Your token and API key are sent straight to GitHub and Clockify from this page. This
             tool never stores them anywhere but your browser.
@@ -177,8 +177,11 @@
 
         <!-- Step 2: Scope -->
         <section id="step-scope" class="panel" hidden aria-labelledby="step-scope-heading">
-          <h2 id="step-scope-heading">2. Scope</h2>
-          <p class="note">Only commits on each repository's default branch are counted.</p>
+          <h2 id="step-scope-heading">Scope</h2>
+          <p class="panel-intro">
+            Pick the period and the repositories to read. Only your own activity is counted, and
+            only commits on each repository's default branch.
+          </p>
 
           <form id="scope-form" novalidate>
             <fieldset>
@@ -276,6 +279,7 @@
                   Verify your connection to load repositories.
                 </li>
               </ul>
+              <p id="repo-count" class="field-hint" hidden></p>
             </fieldset>
 
             <div class="actions actions-nav">
@@ -289,7 +293,12 @@
 
         <!-- Step 3: Mapping -->
         <section id="step-mapping" class="panel" hidden aria-labelledby="step-mapping-heading">
-          <h2 id="step-mapping-heading">3. Mapping</h2>
+          <h2 id="step-mapping-heading">Mapping</h2>
+          <p class="panel-intro">
+            Choose the Clockify workspace and project the entries go to, and how a day is shaped:
+            each day with activity gets entries starting at the start time, adding up to the hours
+            per day, in the timezone the dates are read in.
+          </p>
 
           <form id="mapping-form" novalidate>
             <div class="field-row">
@@ -365,7 +374,12 @@
 
         <!-- Step 4: Preview & Import -->
         <section id="step-preview" class="panel" hidden aria-labelledby="step-preview-heading">
-          <h2 id="step-preview-heading">4. Preview &amp; import</h2>
+          <h2 id="step-preview-heading">Preview &amp; import</h2>
+          <p class="panel-intro">
+            One row per issue per day. Untick what you don't want, adjust hours if needed, then
+            import. Days that already have entries in this project are marked as duplicates and
+            skipped.
+          </p>
 
           <div id="scan-progress-wrap" hidden>
             <div
@@ -379,7 +393,7 @@
             >
               <div class="progress-fill" id="scan-progress-fill"></div>
             </div>
-            <p id="scan-status" role="status" aria-live="polite">Scanning repositories&hellip;</p>
+            <p id="scan-status">Scanning repositories&hellip;</p>
           </div>
 
           <div
@@ -446,21 +460,21 @@
           </p>
           <p id="preview-free-warning" class="totals totals-warning" role="status" hidden></p>
 
+          <div id="import-results" class="result-card" hidden>
+            <h3>Import results</h3>
+            <ul id="import-results-list"></ul>
+          </div>
+
           <div class="actions actions-nav">
             <button type="button" id="preview-back" class="btn btn-ghost">Back</button>
             <button type="button" id="import-btn" class="btn btn-primary" disabled>
               Import entries
             </button>
           </div>
-
-          <div id="import-results" class="result-card" hidden>
-            <h3>Import results</h3>
-            <ul id="import-results-list"></ul>
-          </div>
         </section>
       </main>
 
-      <div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
+      <div id="toasts" class="toasts"></div>
 
       <footer class="site-footer">
         <p>

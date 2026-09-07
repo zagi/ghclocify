@@ -1,8 +1,9 @@
 /**
- * Toast notifications. Additive to the screen-reader `#status-region`
- * announcements in ./app — this is the visual layer, `announce()` stays the
- * accessible one. CSP forbids inline style/script, so every node here is
- * built with createElement and styled entirely through classes.
+ * Toast notifications. The container is not a live region on purpose: it's
+ * a purely visual layer, and `announce()` in ./app writes the same message
+ * to `#status-region` as the single screen-reader channel. CSP forbids
+ * inline style/script, so every node here is built with createElement and
+ * styled entirely through classes.
  */
 import { icon } from './icons';
 import type { IconName } from './icons';
