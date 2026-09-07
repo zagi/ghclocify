@@ -663,7 +663,7 @@ td.status-cell {
 }
 
 td.repos-cell {
-  min-width: 11rem;
+  min-width: 10rem;
 }
 
 td.description-cell {
