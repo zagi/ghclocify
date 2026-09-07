@@ -35,7 +35,7 @@
     --color-surface: #1b1f26;
     --color-surface-alt: #242933;
     --color-border: #333a46;
-    --color-border-strong: #64707f;
+    --color-border-strong: #6b7787;
     --color-text: #f0ede6;
     --color-text-muted: #a8a296;
     --color-accent: #f0a848;
@@ -331,6 +331,7 @@ select {
 
 input.is-derived {
   background: var(--color-surface-alt);
+  border-color: var(--color-text-muted);
   border-style: dashed;
   cursor: default;
 }
@@ -666,8 +667,12 @@ td.repos-cell {
 }
 
 td.description-cell {
-  min-width: 20rem;
-  max-width: 34rem;
+  min-width: 18rem;
+  max-width: 28rem;
+}
+
+td.status-cell {
+  min-width: 8.5rem;
 }
 
 /* The pill stays on one line; the "Existing: …" hint under it may wrap. */
@@ -688,6 +693,12 @@ tbody tr.is-duplicate {
 
 tbody tr.is-imported {
   background: var(--color-positive-bg);
+}
+
+/* Without this the "Imported" pill's own status-success background (also
+   --color-positive-bg) is indistinguishable from the row tint it sits on. */
+tr.is-imported .status-pill.status-success {
+  background: var(--color-surface);
 }
 
 .duplicate-tag {
@@ -853,12 +864,29 @@ td.hours-cell {
     max-width: 46rem;
   }
 
-  #preview-table-wrap thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
+  #preview-table-wrap thead,
+  #preview-table-wrap thead tr,
+  #preview-table-wrap thead th:first-child {
+    display: block;
+  }
+  #preview-table-wrap thead th:not(:first-child) {
+    display: none;
+  }
+  #preview-table-wrap thead th:first-child {
+    position: static;
+    padding: 0.55rem 0.65rem;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+  #preview-table-wrap thead th:first-child::after {
+    content: 'Select all';
+    font-family: var(--font-sans);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--color-text);
   }
 
   #preview-table-wrap tbody tr {
@@ -916,7 +944,9 @@ td.hours-cell {
     grid-area: desc;
   }
   #preview-table-wrap td.repos-cell::before,
-  #preview-table-wrap td.description-cell::before {
+  #preview-table-wrap td.description-cell::before,
+  #preview-table-wrap td.issue-cell::before,
+  #preview-table-wrap td.hours-cell::before {
     content: attr(data-label) ': ';
     font-family: var(--font-mono);
     font-size: 0.65rem;
@@ -927,6 +957,9 @@ td.hours-cell {
   #preview-table-wrap td.status-cell .field-hint {
     min-width: 0;
     max-width: none;
+  }
+  #preview-table-wrap td.table-empty {
+    grid-column: 1 / -1;
   }
 
   .toasts {
@@ -953,6 +986,7 @@ td.hours-cell {
     border-right: none;
   }
   .stepper-item a {
+    position: relative;
     padding: 0.6rem 0.65rem;
     justify-content: center;
   }
@@ -960,10 +994,20 @@ td.hours-cell {
     justify-content: flex-start;
   }
   .stepper-label {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
   .stepper-item.is-current .stepper-label {
-    display: inline;
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
   }
 }
 .toast {

@@ -56,7 +56,11 @@ export function icon(name: IconName, opts: { size?: number; className?: string }
     width: String(size),
     height: String(size),
     'stroke-width': '2',
+    // createElement's `class` option replaces lucide's own `lucide
+    // lucide-<name>` classes entirely, so the icon keeps only our `icon`
+    // class; `data-icon` restores a name-based hook for CSS/JS/debugging.
     class: `icon${opts.className ? ` ${opts.className}` : ''}`,
+    'data-icon': name,
     'aria-hidden': 'true',
     focusable: 'false',
   });

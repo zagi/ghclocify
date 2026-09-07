@@ -414,7 +414,9 @@ export function renderScanProgress(state: State): void {
   if (state.existingEntriesError) {
     dupWarning.hidden = false;
     const span = dupWarning.querySelector('.banner-text');
-    if (span) span.textContent = state.existingEntriesError;
+    if (span && span.textContent !== state.existingEntriesError) {
+      span.textContent = state.existingEntriesError;
+    }
   } else {
     dupWarning.hidden = true;
   }
