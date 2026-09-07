@@ -318,7 +318,7 @@ async function handleVerify(): Promise<void> {
     toaster.push({
       kind: 'success',
       title: 'Connected',
-      message: `${ghResult.value.viewer.login} · ${cfResult.value.user.name}`,
+      message: `GitHub: ${ghResult.value.viewer.login} · Clockify: ${cfResult.value.user.name}`,
     });
   }
 }

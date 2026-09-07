@@ -260,16 +260,6 @@ img {
   max-width: 38rem;
 }
 
-.note {
-  margin: 0 0 1.5rem;
-  padding: 0.6rem 0.85rem;
-  border-left: 3px solid var(--color-accent);
-  background: var(--color-surface-alt);
-  border-radius: 0 var(--radius) var(--radius) 0;
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-}
-
 /* Forms */
 
 fieldset {

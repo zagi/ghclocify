@@ -67,7 +67,7 @@ export function renderStaticIcons(): void {
   setButtonLabel(el('scope-back') as HTMLButtonElement, 'back', 'Back');
   setButtonLabel(el('scope-continue') as HTMLButtonElement, 'next', 'Continue to mapping');
   setButtonLabel(el('mapping-back') as HTMLButtonElement, 'back', 'Back');
-  setButtonLabel(el('mapping-continue') as HTMLButtonElement, 'filter', 'Scan activity');
+  setButtonLabel(el('mapping-continue') as HTMLButtonElement, 'scan', 'Scan activity');
   const issueTh = document.querySelector<HTMLElement>('#preview-table-wrap th[data-col="issue"]');
   if (issueTh) issueTh.prepend(icon('hash', { size: 12 }));
   const hoursTh = document.querySelector<HTMLElement>('#preview-table-wrap th[data-col="hours"]');
