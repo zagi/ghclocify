@@ -17,6 +17,11 @@ export default defineConfig({
             'test/contrast.test.ts',
           ],
           environment: 'node',
+          // Vitest mocks .css imports as empty by default (it assumes
+          // they're stylesheets a component pulls in, not data to read) —
+          // contrast.test.ts's `?raw` import of public/style.css needs the
+          // real content, so CSS processing has to be turned on here.
+          css: true,
         },
       },
       {

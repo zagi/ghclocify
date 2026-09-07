@@ -1,11 +1,11 @@
-import { readFileSync } from 'node:fs';
+/// <reference types="vite/client" />
 import { describe, expect, it } from 'vitest';
+import css from '../public/style.css?raw';
 
 /**
  * Guards the palette in public/style.css against silent contrast regressions.
  * Text pairs need 4.5:1 (WCAG 1.4.3), control boundaries 3:1 (WCAG 1.4.11).
  */
-const css = readFileSync(new URL('../public/style.css', import.meta.url), 'utf8');
 
 function tokens(block: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -25,6 +25,9 @@ const darkBraceOpen = css.indexOf('{', darkRootStart);
 let depth = 1;
 let darkBraceClose = darkBraceOpen + 1;
 while (depth > 0) {
+  if (darkBraceClose >= css.length) {
+    throw new Error('contrast.test.ts: unbalanced braces looking for the dark :root block close');
+  }
   const ch = css[darkBraceClose];
   if (ch === '{') depth++;
   else if (ch === '}') depth--;
@@ -56,7 +59,10 @@ const TEXT_PAIRS: [string, string][] = [
   ['color-warning', 'color-warning-bg'],
   ['color-warning', 'color-surface'],
 ];
-const BOUNDARY_PAIRS: [string, string][] = [['color-border-strong', 'color-surface']];
+const BOUNDARY_PAIRS: [string, string][] = [
+  ['color-border-strong', 'color-surface'],
+  ['color-border-strong', 'color-surface-alt'],
+];
 
 describe.each([
   ['light', light],

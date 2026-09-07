@@ -34,7 +34,7 @@ const TYPE_PREFIX = /^\((fix|feat)\)/i;
  * already emitted once per repo block. Collapses the whitespace left behind.
  * Returns '' when nothing but markers remained (e.g. a title of "#12").
  */
-export function cleanTitle(title: string): string {
+function cleanTitle(title: string): string {
   return title.replace(TYPE_PREFIX, '').replace(ISSUE_REF, '').replace(/\s+/g, ' ').trim();
 }
 
