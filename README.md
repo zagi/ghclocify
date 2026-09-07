@@ -15,7 +15,10 @@ task.
 Each GitHub issue you touched on a day becomes its own entry (activities that
 reference no issue share one "Other" entry), and the day's hours are split
 evenly across them — or, if you untick that option, typed in per entry with
-a running total before you import. The entry description lists the repository, the issue numbers and the commit titles once each — titles are shown without the "#N" and "(fix)" markers that already lead the description.
+a running total before you import. The entry description lists the
+repository, the issue numbers, and the commit titles once each — titles are
+shown without the "#N" and "(fix)" markers that already lead the
+description.
 
 It is a public tool: anyone can use it with their own GitHub personal
 access token and their own Clockify API key. There is no login, no account,
@@ -131,7 +134,10 @@ Clockify plan (50 requests/sec), this doesn't apply to you. The preview
 also shows an estimated duration for the import and, for Free
 workspaces, roughly how many hours the import would need against that
 budget — the tool does not pace itself across hours, so a large import
-on a Free workspace should be done in stages instead.
+on a Free workspace should be done in stages instead. An import also
+ends with one extra Clockify read (a re-check of existing entries, so
+the preview reflects what actually landed) — budget for that request
+too on a Free workspace.
 
 **A day imported from a partial (cancelled) scan can never be corrected by
 re-scanning.** Duplicate detection matches on (day, project): once a day has
