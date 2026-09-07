@@ -711,11 +711,17 @@ function initFormFromState(): void {
     });
     startInput.value = range.start;
     endInput.value = range.end;
-    startInput.disabled = true;
-    endInput.disabled = true;
+    startInput.readOnly = true;
+    endInput.readOnly = true;
+    startInput.classList.add('is-derived');
+    endInput.classList.add('is-derived');
   } else {
     startInput.value = s.prefs.startDate;
     endInput.value = s.prefs.endDate;
+    startInput.readOnly = false;
+    endInput.readOnly = false;
+    startInput.classList.remove('is-derived');
+    endInput.classList.remove('is-derived');
   }
 
   qs<HTMLInputElement>('source-commits').checked = s.prefs.sources.commits;
@@ -864,11 +870,15 @@ function wireScopeStep(): void {
       if (range) {
         startInput.value = range.start;
         endInput.value = range.end;
-        startInput.disabled = true;
-        endInput.disabled = true;
+        startInput.readOnly = true;
+        endInput.readOnly = true;
+        startInput.classList.add('is-derived');
+        endInput.classList.add('is-derived');
       } else {
-        startInput.disabled = false;
-        endInput.disabled = false;
+        startInput.readOnly = false;
+        endInput.readOnly = false;
+        startInput.classList.remove('is-derived');
+        endInput.classList.remove('is-derived');
       }
       store.update((s) => {
         s.prefs.datePreset = preset;

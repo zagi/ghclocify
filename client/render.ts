@@ -212,6 +212,7 @@ export function renderRepoList(state: State): void {
   const list = el('repo-list');
   const { repos, reposLoading, reposError, repoFilter } = state.scope;
   const selected = new Set(state.prefs.selectedRepos);
+  const count = el('repo-count');
 
   list.innerHTML = '';
 
@@ -221,6 +222,7 @@ export function renderRepoList(state: State): void {
     li.id = 'repo-list-empty';
     li.textContent = 'Loading repositories…';
     list.appendChild(li);
+    count.hidden = true;
     return;
   }
 
@@ -230,6 +232,7 @@ export function renderRepoList(state: State): void {
     li.id = 'repo-list-empty';
     li.textContent = reposError;
     list.appendChild(li);
+    count.hidden = true;
     return;
   }
 
@@ -239,6 +242,7 @@ export function renderRepoList(state: State): void {
     li.id = 'repo-list-empty';
     li.textContent = 'Verify your connection to load repositories.';
     list.appendChild(li);
+    count.hidden = true;
     return;
   }
 
@@ -246,6 +250,12 @@ export function renderRepoList(state: State): void {
   const visible = needle ? repos.filter((r) => r.fullName.toLowerCase().includes(needle)) : repos;
   const allVisibleSelected = visible.length > 0 && visible.every((r) => selected.has(r.fullName));
   setText('repo-select-all', allVisibleSelected ? 'Deselect all' : 'Select all');
+
+  count.hidden = false;
+  const selectedCount = state.prefs.selectedRepos.length;
+  count.textContent = needle
+    ? `${visible.length} of ${repos.length} match "${repoFilter.trim()}" · ${selectedCount} selected`
+    : `${repos.length} ${repos.length === 1 ? 'repository' : 'repositories'} · ${selectedCount} selected`;
 
   if (visible.length === 0) {
     const li = document.createElement('li');
